@@ -193,6 +193,11 @@ class App:
             self.hk_vars[key] = var
             self.hk_combos[key] = cb
 
+        ttk.Label(hk, text="MOUSE4 / MOUSE5 = 鼠标侧键（后退 / 前进）；"
+                           "字母键故意不开放，防止打字时误触",
+                  style="Hint.TLabel").grid(row=1, column=0, columnspan=8,
+                                            sticky="w", pady=(6, 0))
+
         # ---- 聊天区域 / 翻译后端 ----
         box = ttk.LabelFrame(outer, text=" 聊天区域 & 翻译后端 ", padding=10)
         box.pack(fill="x", pady=6)

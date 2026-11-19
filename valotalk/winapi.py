@@ -28,11 +28,17 @@ for _c in "abcdefghijklmnopqrstuvwxyz":
 for _d in "0123456789":
     VK[_d] = ord(_d)
 
+# 鼠标侧键（后退/前进）。左右中键故意不给 —— 会干扰正常点击。
+# GetAsyncKeyState 能直接读到这两个键的状态，所以当热键用是安全的。
+VK["mouse4"] = 0x05      # XBUTTON1 侧键（后退）
+VK["mouse5"] = 0x06      # XBUTTON2 侧键（前进）
+MOUSE_KEYS = {0x05: 0x0001, 0x06: 0x0002}   # vk -> XBUTTON 标识
+
 # 界面上可选的热键（避开字母，免得打字时误触；V 留给游戏开麦）
 HOTKEY_CHOICES = [
     "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12",
     "CAPSLOCK", "TAB", "INSERT", "HOME", "END", "DELETE", "PAGEUP", "PAGEDOWN",
-    "`",
+    "MOUSE4", "MOUSE5", "`",
 ]
 
 
@@ -72,8 +78,11 @@ class _INPUT(ctypes.Structure):
 
 
 INPUT_KEYBOARD = 1
+INPUT_MOUSE = 0
 KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_SCANCODE = 0x0008
+MOUSEEVENTF_XDOWN = 0x0080
+MOUSEEVENTF_XUP = 0x0100
 
 
 def _send_key(vk: int, up: bool) -> None:
@@ -87,16 +96,38 @@ def _send_key(vk: int, up: bool) -> None:
     user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
 
 
+def _send_xbutton(xbutton: int, up: bool) -> None:
+    """模拟鼠标侧键（游戏的语音键也可以绑侧键）。"""
+    inp = _INPUT(type=INPUT_MOUSE)
+    mi = _MOUSEINPUT()
+    mi.dx = 0
+    mi.dy = 0
+    mi.mouseData = xbutton
+    mi.dwFlags = MOUSEEVENTF_XUP if up else MOUSEEVENTF_XDOWN
+    mi.time = 0
+    mi.dwExtraInfo = None
+    inp.union.mi = mi
+    user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
+
+
 def key_down(name: str) -> None:
     try:
-        _send_key(vk_of(name), up=False)
+        vk = vk_of(name)
+        if vk in MOUSE_KEYS:
+            _send_xbutton(MOUSE_KEYS[vk], up=False)
+        else:
+            _send_key(vk, up=False)
     except Exception:
         pass
 
 
 def key_up(name: str) -> None:
     try:
-        _send_key(vk_of(name), up=True)
+        vk = vk_of(name)
+        if vk in MOUSE_KEYS:
+            _send_xbutton(MOUSE_KEYS[vk], up=True)
+        else:
+            _send_key(vk, up=True)
     except Exception:
         pass
 

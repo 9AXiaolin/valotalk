@@ -104,10 +104,13 @@ class Overlay:
 
     def _add_main(self, tag: str, text: str, original: str, ttl: float) -> None:
         self.items.append(Item(tag, text, original or "", time.time(), ttl))
-        max_lines = int(self._get("overlay.max_lines", 9) or 9)
+        max_lines = int(self._get("overlay.max_lines", 6) or 6)
         if len(self.items) > max_lines:
             self.items = self.items[-max_lines:]
         self._render()
+        # 有新字幕时才主动置顶一次，平时交给 3 秒的保底检查
+        winapi.keep_topmost(self._hwnd)
+        self._last_top = time.time()
 
     def clear(self) -> None:
         self.root.after(0, self._clear_main)
@@ -174,9 +177,12 @@ class Overlay:
                 )
                 c.tag_lower(rect, tid)
             elif outline:
-                # 无底色时靠描边保证在亮背景上也能看清
-                for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1),
-                               (-1, -1), (1, -1), (-1, 1), (1, 1)):
+                # 无底色时靠描边保证在亮背景上也能看清。
+                # 层数可调：8 层最清晰但 canvas item 翻倍，4 层够用且省一半重绘开销
+                layers = int(self._get("overlay.outline_layers", 4) or 4)
+                offsets = ((-1, 0), (1, 0), (0, -1), (0, 1),
+                           (-1, -1), (1, -1), (-1, 1), (1, 1))[:layers]
+                for dx, dy in offsets:
                     edge = c.create_text(pad + dx, y + dy, anchor="nw", text=text,
                                          font=font, fill="#000000", width=wrap)
                     c.tag_lower(edge, tid)
@@ -191,8 +197,12 @@ class Overlay:
             if len(keep) != len(self.items):
                 self.items = keep
                 self._render()
-            # 保持置顶（游戏切前台后仍要浮在上面）
-            winapi.keep_topmost(self._hwnd)
+            # 置顶检查降到 3 秒一次：SetWindowPos 会打断全屏游戏的合成链路，
+            # 频繁调用正是帧率在刷新率上限与 60 之间横跳的来源之一。
+            interval = float(self._get("overlay.topmost_interval_s", 3.0) or 3.0)
+            if now - getattr(self, "_last_top", 0.0) > interval:
+                self._last_top = now
+                winapi.keep_topmost(self._hwnd)
         except Exception:
             pass
         self.root.after(500, self._loop)

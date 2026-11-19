@@ -166,6 +166,10 @@ class App:
         ttk.Checkbutton(sw, text="字幕穿透鼠标", variable=self.v_through,
                         command=self._on_through_toggle).grid(row=1, column=1, sticky="w",
                                                               pady=(6, 0))
+        self.v_cpu = tk.BooleanVar(value=str(self._get("asr.device", "auto")) == "cpu")
+        ttk.Checkbutton(sw, text="识别用 CPU（不抢显卡，稍慢）", variable=self.v_cpu,
+                        command=self._on_cpu_toggle).grid(row=2, column=0, sticky="w",
+                                                          pady=(6, 0))
         ttk.Button(sw, text="字幕贴回屏幕下方",
                    command=lambda: self.overlay.reset_position()).grid(
             row=1, column=2, sticky="w", pady=(6, 0))
@@ -271,6 +275,24 @@ class App:
                 on_status=lambda s: self.log(f"[模型] {s}")),
             daemon=True,
         ).start()
+
+    def _on_cpu_toggle(self) -> None:
+        """显卡紧张时完全退出 GPU：识别改走 CPU。"""
+        dev = "cpu" if self.v_cpu.get() else "auto"
+        self._set("asr.device", dev)
+        self.log(f"识别设备切换为 {dev}，重新加载模型 …")
+        if dev == "cpu":
+            self.log("  提示：CPU 上 small 很慢（RTF≈1.8），建议把右上角模型改成 base 或 tiny")
+
+        def reload():
+            self.asr._model = None
+            self.asr.loaded = False
+            import valotalk.asr as asr_mod
+            asr_mod._MODEL = None
+            asr_mod._MODEL_KEY = None
+            self.asr.ensure_loaded(on_status=lambda s: self.log(f"[模型] {s}"))
+
+        threading.Thread(target=reload, daemon=True).start()
 
     def _set_flag(self, name: str, value: bool) -> None:
         self.flags[name] = bool(value)
@@ -708,22 +730,26 @@ class App:
                 fn()
             except Exception:
                 pass
-        # 采集电平：一眼看出有没有真的在收声音
-        try:
-            game = self._sources.get("game")
-            mic = self._sources.get("mic")
-            bar = ""
-            for name, src in (("游戏", game), ("麦", mic)):
-                if src is None:
-                    bar += f"{name} —  "
-                else:
-                    p = src.peak
-                    n = 0 if p < 0.005 else (1 if p < 0.02 else 2 if p < 0.06
-                                             else 3 if p < 0.15 else 4)
-                    bar += f"{name} {'▁▃▅▇█'[n]}  "
-            self.meter_lbl.configure(text=bar)
-        except Exception:
-            pass
+        # 采集电平：一眼看出有没有真的在收声音。
+        # 200ms 刷一次即可 —— 40ms 一次等于每秒重排 25 次界面，白占资源
+        now = time.time()
+        if now - getattr(self, "_last_meter", 0.0) > 0.2:
+            self._last_meter = now
+            try:
+                game = self._sources.get("game")
+                mic = self._sources.get("mic")
+                bar = ""
+                for name, src in (("游戏", game), ("麦", mic)):
+                    if src is None:
+                        bar += f"{name} —  "
+                    else:
+                        p = src.peak
+                        n = 0 if p < 0.005 else (1 if p < 0.02 else 2 if p < 0.06
+                                                 else 3 if p < 0.15 else 4)
+                        bar += f"{name} {'▁▃▅▇█'[n]}  "
+                self.meter_lbl.configure(text=bar)
+            except Exception:
+                pass
         self.root.after(40, self._pump_ui)
 
     def log(self, msg: str) -> None:

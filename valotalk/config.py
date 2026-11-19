@@ -61,7 +61,7 @@ DEFAULTS: dict = {
     "ocr": {
         "engine": "auto",              # auto / rapidocr / winrt
         "region": [0, 0, 0, 0],        # [x1,y1,x2,y2]，全 0 表示未设置
-        "interval_ms": 1200,           # 聊天不用每 0.6 秒扫，1.2 秒足够
+        "interval_ms": 2000,           # 聊天扫描间隔；抓屏会读回显存，别太勤
         "min_confidence": 0.50,
         "max_lines": 10,
         "translate": True,
@@ -87,11 +87,13 @@ DEFAULTS: dict = {
         "font_size": 19,
         "backdrop": False,             # 不要黑色底板
         "outline": True,               # 改用文字描边保证可读性
+        "outline_layers": 4,           # 描边层数：8 最清晰但重绘翻倍，4 够用
+        "topmost_interval_s": 3.0,     # 置顶检查间隔，太勤会打断全屏合成
         "x": -1,                        # -1 = 自动贴屏幕下方居中
         "y": -1,
         "width": 1120,
-        "height": 380,
-        "max_lines": 9,
+        "height": 300,
+        "max_lines": 6,
         "ttl_seconds": 30,
         "show_original": True,
         "click_through": True,

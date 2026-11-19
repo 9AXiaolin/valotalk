@@ -34,14 +34,14 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1
 
 | 项 | 设成 |
 |---|---|
-| 语音聊天输入设备 | **麦克风 (VB-Audio Virtual Cable)** |
+| 语音聊天输入设备 | **变音麦克风 (VB-Audio Virtual Cable)** |
 | 语音聊天输出设备 | **你的耳机/扬声器**（**不要**选 Cable） |
 | 语音聊天模式 | 见下 |
 
 > ⚠️ 中文系统里 VB-Audio Cable 的两个端点名字是反的，别选错：
 >
-> - `输出 (VB-Audio Virtual Cable)` = **播放端**，ValoTalk 往这里灌英文（面板上的「TTS 输出」）
-> - `麦克风 (VB-Audio Virtual Cable)` = **录音端**，游戏从这取麦克风（游戏里的「语音输入」）
+> - `变声器输出 (VB-Audio Virtual Cable)` = **播放端**，ValoTalk 往这里灌英文（面板上的「TTS 输出」）
+> - `变音麦克风 (VB-Audio Virtual Cable)` = **录音端**，游戏从这取麦克风（游戏里的「语音输入」）
 
 **关于 Push to Talk：** 两种都行。
 
@@ -84,6 +84,48 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1
 | **F5** | 临时静音英文输出（不想让队友听到时） |
 
 字幕默认贴在**屏幕下方居中**，点面板上的「字幕贴回屏幕下方」可复位；关掉穿透后可以直接拖动它。
+
+### 为什么说中文用 F2，不用游戏的 V
+
+很多人第一反应是「V 不就是开麦键吗，为什么还要单独一个 F2」。因为这两个键在干**完全相反**的事：
+
+| 键 | 谁按 | 作用 |
+|---|---|---|
+| **V** | **程序自动按** | 打开游戏麦克风，把英文 TTS 送出去 |
+| **F2** | **你自己按住** | 告诉程序「现在开始听我说中文」，松手就翻译 |
+
+程序播放英文之前会先替你按住 V、播完再松开（`tts.game_ptt_enabled` + `tts.game_ptt_key`）。你不需要手动碰它。
+
+三个不能合并成同一个键的原因：
+
+**1. 会自己触发自己。** 程序用 `SendInput` 注入 V，而热键是靠 `GetAsyncKeyState` 轮询的 —— 注入的键会被自己读到。播放完英文 → 被当成你又按了一次 → 再识别一遍 → 再播放，死循环。
+
+**2. 游戏的开麦动作会插进来。** 你按 V 的瞬间游戏也在开麦，两条链路的状态互相打架。
+
+**3. 语义相反。** V 是「我往外送声音」，F2 是「程序往里听我说话」。一个出、一个入。
+
+#### 更省事的选择：用开放式麦克风
+
+如果游戏语音模式设成 **开放式麦克风（Open Mic）**，就不用模拟按键了：
+
+```jsonc
+"tts": { "game_ptt_enabled": false }
+```
+
+麦克风一直开着，程序往 Cable 里播，游戏自动收走。**推荐这个** —— 没有按键时序问题，也不会偶尔和游戏抢键。
+
+#### 想换触发键
+
+```jsonc
+"hotkeys": {
+  "ptt": "capslock",                 // 换成 CapsLock
+  "toggle_click_through": "f3",
+  "clear_overlay": "f4",
+  "toggle_mute_outgoing": "f6"       // 挪开，别和 ptt 撞
+}
+```
+
+支持 `f1`–`f12`、`capslock`、`tab`、`` ` ``、字母数字。**只要别用 V**（那是游戏的），也别和 F3/F4/F5 撞上。改完重启 `run.bat`。
 
 ---
 

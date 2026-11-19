@@ -1,0 +1,95 @@
+{
+  "asr": {
+    "model": "small",
+    "device": "auto",
+    "compute_type": "auto",
+    "lang_teammates": "en",
+    "lang_me": "zh",
+    "beam_size": 1,
+    "cpu_threads": 2,
+    "warmup": true,
+    "download_root": "models"
+  },
+  "audio": {
+    "game_output_device": "",
+    "mic_device": "",
+    "tts_output_device": "",
+    "capture_samplerate": 48000,
+    "block_ms": 30,
+    "vad": {
+      "noise_floor": 0.004,
+      "start_ratio": 3.0,
+      "start_rms": 0.01,
+      "silence_ms": 420,
+      "min_speech_ms": 250,
+      "max_utterance_ms": 8000,
+      "preroll_ms": 240,
+      "silero_threshold": 0.5,
+      "silero_min_speech_ms": 300,
+      "silero_end_gap_ms": 380,
+      "silero_min_silence_ms": 220,
+      "silero_pad_ms": 120,
+      "silero_window_s": 8.0
+    }
+  },
+  "translate": {
+    "backend": "auto",
+    "google_endpoint": "https://translate.googleapis.com/translate_a/single",
+    "proxy": "",
+    "google_timeout": 3,
+    "mymemory_timeout": 6,
+    "llm": {
+      "base_url": "",
+      "api_key": "",
+      "model": "",
+      "timeout": 10
+    },
+    "glossary": true,
+    "cache_size": 4000,
+    "timeout": 5
+  },
+  "ocr": {
+    "engine": "auto",
+    "region": [0, 0, 0, 0],
+    "interval_ms": 1200,
+    "min_confidence": 0.5,
+    "max_lines": 10,
+    "translate": true
+  },
+  "tts": {
+    "engine": "edge",
+    "voice": "en-US-GuyNeural",
+    "rate": "+10%",
+    "volume": "+0%",
+    "game_ptt_enabled": true,
+    "game_ptt_key": "v",
+    "ptt_hold_after_ms": 400,
+    "max_chars": 220
+  },
+  "hotkeys": {
+    "ptt": "f2",
+    "toggle_click_through": "f3",
+    "clear_overlay": "f4",
+    "toggle_mute_outgoing": "f5"
+  },
+  "overlay": {
+    "font_family": "Microsoft YaHei UI",
+    "font_size": 19,
+    "backdrop": false,
+    "outline": true,
+    "x": -1,
+    "y": -1,
+    "width": 1120,
+    "height": 380,
+    "max_lines": 9,
+    "ttl_seconds": 30,
+    "show_original": true,
+    "click_through": true,
+    "show_me": true,
+    "show_teammates": true,
+    "show_chat": true
+  },
+  "ui": {
+    "panel_on_top": true
+  }
+}

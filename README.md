@@ -76,12 +76,16 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1
 
 ### 快捷键（全局，游戏里也生效）
 
-| 键 | 作用 |
+| 默认键 | 作用 |
 |---|---|
 | **按住 F2** | 说中文 → 队友听到英文（松开就翻译） |
 | **F3** | 字幕窗在「穿透鼠标 / 可拖动」之间切换 |
 | **F4** | 清空字幕 |
 | **F5** | 临时静音英文输出（不想让队友听到时） |
+
+**改键不用碰配置文件**：控制面板中间有「快捷键」一栏，四个下拉框选完立刻生效（会写回 `config.json`）。重复绑定、占用游戏开麦键 V 都会被拦下来并在日志里提示。
+
+可选键位：`F1`–`F12`、`CapsLock`、`Tab`、`Insert`、`Home`、`End`、`Delete`、`PgUp`、`PgDn`、`` ` ``。故意没放字母键 —— 打字时会误触。
 
 字幕默认贴在**屏幕下方居中**，点面板上的「字幕贴回屏幕下方」可复位；关掉穿透后可以直接拖动它。
 
@@ -116,16 +120,20 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1
 
 #### 想换触发键
 
+**面板上直接改**：中间「快捷键」一栏，把「说中文」的下拉框选成 `CapsLock` 或别的，立刻生效，不用重启。
+
+改完写回 `config.json` 的 `hotkeys.ptt`，想批量改也可以直接编辑文件：
+
 ```jsonc
 "hotkeys": {
-  "ptt": "capslock",                 // 换成 CapsLock
+  "ptt": "capslock",
   "toggle_click_through": "f3",
   "clear_overlay": "f4",
   "toggle_mute_outgoing": "f6"       // 挪开，别和 ptt 撞
 }
 ```
 
-支持 `f1`–`f12`、`capslock`、`tab`、`` ` ``、字母数字。**只要别用 V**（那是游戏的），也别和 F3/F4/F5 撞上。改完重启 `run.bat`。
+**只要别用 V**（那是游戏的），也别让四个键互相重复。
 
 ---
 

@@ -170,6 +170,29 @@ class App:
                    command=lambda: self.overlay.reset_position()).grid(
             row=1, column=2, sticky="w", pady=(6, 0))
 
+        # ---- 快捷键 ----
+        hk = ttk.LabelFrame(outer, text=" 快捷键（改完立刻生效） ", padding=10)
+        hk.pack(fill="x", pady=6)
+        self.hk_vars: dict[str, tk.StringVar] = {}
+        self.hk_combos: dict[str, ttk.Combobox] = {}
+        specs = [
+            ("ptt", "说中文"),
+            ("toggle_click_through", "字幕穿透"),
+            ("clear_overlay", "清屏"),
+            ("toggle_mute_outgoing", "静音输出"),
+        ]
+        cur = self._get("hotkeys", {}) or {}
+        for i, (key, label) in enumerate(specs):
+            ttk.Label(hk, text=label + "：").grid(row=0, column=i * 2, sticky="e",
+                                                  padx=(10 if i else 0, 3))
+            var = tk.StringVar(value=str(cur.get(key, "")).upper())
+            cb = ttk.Combobox(hk, textvariable=var, width=10, state="readonly",
+                             values=winapi.HOTKEY_CHOICES)
+            cb.grid(row=0, column=i * 2 + 1, sticky="w")
+            cb.bind("<<ComboboxSelected>>", lambda _e: self._apply_hotkeys())
+            self.hk_vars[key] = var
+            self.hk_combos[key] = cb
+
         # ---- 聊天区域 / 翻译后端 ----
         box = ttk.LabelFrame(outer, text=" 聊天区域 & 翻译后端 ", padding=10)
         box.pack(fill="x", pady=6)
@@ -310,7 +333,29 @@ class App:
             self.overlay.bind_drag()
 
     # ============================================================ 热键
+    def _apply_hotkeys(self) -> None:
+        """界面改了快捷键后立即重建绑定，不用重启。"""
+        hk = {k: (v.get() or "").strip().lower() for k, v in self.hk_vars.items()}
+        if not all(hk.values()):
+            self.log("[快捷键] 有键位为空，已忽略本次修改")
+            return
+        vals = list(hk.values())
+        dup = sorted({v for v in vals if vals.count(v) > 1})
+        if dup:
+            self.log(f"[快捷键] {', '.join(k.upper() for k in dup)} 被重复绑定，已忽略")
+            return
+        if "v" in vals:
+            self.log("[快捷键] V 是游戏开麦键，占用会冲突，已忽略")
+            return
+        for k, v in hk.items():
+            self._set("hotkeys." + k, v, save=False)
+        self.cfg.save()
+        self._bind_hotkeys()
+        self.log("快捷键已更新：" + "  ".join(f"{k} → {v.upper()}" for k, v in hk.items()))
+        self._ui_state(self.state_lbl.cget("text"), self.state_lbl.cget("foreground"))
+
     def _bind_hotkeys(self) -> None:
+        self.hotkeys.reset()
         hk = self._get("hotkeys", {}) or {}
         self.hotkeys.bind("ptt", hk.get("ptt", "f2"),
                           on_press=self._ptt_down, on_release=self._ptt_up)

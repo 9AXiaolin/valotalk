@@ -28,6 +28,13 @@ for _c in "abcdefghijklmnopqrstuvwxyz":
 for _d in "0123456789":
     VK[_d] = ord(_d)
 
+# 界面上可选的热键（避开字母，免得打字时误触；V 留给游戏开麦）
+HOTKEY_CHOICES = [
+    "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12",
+    "CAPSLOCK", "TAB", "INSERT", "HOME", "END", "DELETE", "PAGEUP", "PAGEDOWN",
+    "`",
+]
+
 
 def vk_of(name: str) -> int:
     key = (name or "").strip().lower()
@@ -157,6 +164,18 @@ class HotkeyWatcher:
 
     def stop(self) -> None:
         self._stop.set()
+        t = self._thread
+        if t and t.is_alive() and t is not threading.current_thread():
+            t.join(timeout=1.0)
+        self._thread = None
+
+    def reset(self) -> None:
+        """清空所有绑定，用于界面上改键后重建。"""
+        self.stop()
+        self._bindings.clear()
+        self._on_press.clear()
+        self._on_release.clear()
+        self._state.clear()
 
     def _loop(self) -> None:
         while not self._stop.is_set():

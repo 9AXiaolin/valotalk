@@ -18,7 +18,7 @@ DEFAULTS: dict = {
         "model": "small",              # tiny / base / small / medium
         "device": "auto",              # auto / cuda / cpu
         "compute_type": "auto",        # auto / float16 / int8 / int8_float16
-        "lang_teammates": "en",        # 队友语音语言
+        "lang_teammates": "auto",      # auto = 自动识别语种（英/俄/日/韩都能听）
         "lang_me": "zh",               # 我说的语言
         "beam_size": 1,
         "cpu_threads": 2,              # 别让推理线程池吃满所有核心

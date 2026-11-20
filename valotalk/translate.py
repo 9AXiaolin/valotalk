@@ -16,106 +16,112 @@ from collections import OrderedDict
 
 import requests
 
+from . import terms as _terms
+
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
 # ---------------- 无畏契约英文术语 → 中文 ----------------
-VALORANT_TERMS: dict[str, str] = {
-    "eco round": "经济局", "eco": "经济局", "full buy": "全起", "save": "保枪",
-    "rush": "快冲", "rotate": "转点", "rotating": "在转点", "flank": "绕后",
-    "flanking": "在绕后", "push": "前压", "peek": "探头拉枪", "one tap": "一枪头",
-    "operator": "大狙", "op": "大狙", "plant": "下包", "planting": "在放包",
-    "defuse": "拆包", "defusing": "在拆包", "spike": "炸弹", "site": "包点",
-    "mid": "中路", "heaven": "天堂", "clutch": "残局", "lit": "打残",
-    "tagged": "打上了", "trade": "换人", "crossfire": "交叉火力",
-    "smoke": "烟", "flash": "闪光", "ultimate": "大招", "ult": "大招",
-    "orbs": "能量球", "ult orb": "大招球", "spray": "扫射", "boost": "跳人",
-    "afk": "挂机", "nt": "可惜", "wp": "漂亮", "gj": "干得漂亮",
-    "ns": "好枪", "nice shot": "好枪", "on me": "我这边有人",
-    "behind you": "你后面", "last one": "还剩一个", "one left": "还剩一个",
-    "low": "残血", "cubby": "墙角", "wide": "拉宽",
-    "+4": "在家挂机", "+1": "同意", "afk": "挂机中", "brb": "马上回来",
+# 词表主体在 terms.py（整理自玩家整理的「打瓦常用英文缩写大全」），
+# 这里补几条它没覆盖的高频词。
+_EXTRA_TERMS: dict[str, str] = {
+    "one tap": "一枪头", "operator": "大狙", "op": "大狙",
+    "clutch": "残局", "lit": "打残", "tagged": "打上了",
+    "orbs": "能量球", "ult orb": "大招球", "spray": "扫射",
+    "boost": "跳人", "on me": "我这边有人", "behind you": "你后面",
+    "last one": "还剩一个", "one left": "还剩一个", "low": "残血",
+    "cubby": "墙角", "ultimate": "大招", "ult": "大招",
+    "smoke": "烟", "flash": "闪光", "nice shot": "好枪",
 }
+VALORANT_TERMS: dict[str, str] = {**_EXTRA_TERMS, **_terms.TERMS_ZH}
 
 # ---------------- 英文/符号 → 中文：整句直出，绕开机翻 ----------------
-# 游戏里队友常打的缩写和黑话，机翻会原样吐回来或者译错，这里直接给答案
-_DIRECT_EN_ZH: dict[str, str] = {
-    "+4": "在家挂机",
-    "+1": "同意",
-    "afk": "挂机中",
-    "brb": "马上回来",
-    "omw": "在路上了",
-    "nt": "可惜",
-    "gj": "干得漂亮",
-    "wp": "漂亮",
-    "gg": "打得好",
-    "ez": "轻松",
-    "ns": "好枪",
-}
+# 队友只打一个缩写时（"gg"、"nt"），机翻要么原样吐回来要么译错，这里直接给答案
+_DIRECT_EN_ZH: dict[str, str] = dict(_terms.DIRECT_ZH)
 
 # ---------------- 中文喊话 → 英文（整句命中直接出，绕开机翻） ----------------
-VOICE_LINES: dict[str, str] = {
-    "我开大了": "Using my ultimate now.",
-    "开大了": "Ult going out!",
-    "我要开大": "I'm using my ult.",
-    "大招好了": "My ult is ready.",
-    "掩护我": "Cover me.",
-    "给我掩护": "Cover me, please.",
-    "我上了": "I'm going in.",
-    "我冲了": "I'm pushing in.",
-    "等我": "Wait for me.",
-    "等一下": "Hold on.",
-    "别冲": "Don't push. Hold.",
-    "先别动": "Hold position, don't peek.",
-    "撤": "Fall back.",
-    "撤退": "Fall back now.",
-    "换点": "Rotate.",
-    "转点": "Rotating now.",
-    "打a": "Taking A site.",
-    "打b": "Taking B site.",
-    "打a点": "Taking A site.",
-    "打b点": "Taking B site.",
-    "去a": "Going A.",
-    "去b": "Going B.",
-    "中路": "Going mid.",
-    "我走中路": "I'm taking mid.",
-    "我绕后": "I'm flanking.",
-    "有人": "Enemy here.",
-    "这边有人": "Enemy on me.",
-    "后面有人": "Enemy behind us.",
-    "小心后面": "Watch our backs.",
-    "下包": "Planting the spike.",
-    "我在下包": "I'm planting.",
-    "拆包": "Defusing.",
-    "我在拆包": "I'm defusing, cover me.",
-    "保枪": "Saving this round.",
-    "经济局": "Eco round, save your guns.",
-    "一起上": "Let's go together.",
-    "一起进": "Let's push together.",
-    "打残了": "He's lit.",
-    "他残血": "He's low HP.",
-    "还剩一个": "One left.",
-    "最后一个": "Last one standing.",
-    "好了": "Ready.",
-    "我准备好了": "I'm ready.",
-    "打得好": "Nice shot.",
-    "干得漂亮": "Well played.",
-    "别急": "Take it slow.",
-    "小心狙": "Watch the OP.",
-    "有狙": "They have an OP.",
-    "他们没枪": "They're on eco.",
-    "在家挂机": "I'm AFK at home.",
-    "我挂机": "I'm going AFK.",
-    "挂机": "AFK.",
-    "我挂一会": "AFK for a bit.",
+VOICE_LINES: dict[str, str] = dict(_terms.VOICE)
+# 日服模式：中文喊话 → 日语
+VOICE_LINES_JA: dict[str, str] = dict(_terms.VOICE_JA)
+
+# 缩写展开：送翻译前先把 "nt" 换成 "nice try"，否则 LLM 会译成「牛逼」
+_ABBR_EXPAND: dict[str, str] = {
+    "nt": "nice try", "gg": "good game", "wp": "well played",
+    "ggwp": "good game well played", "mb": "my bad", "ns": "nice shot",
+    "gj": "good job", "ty": "thank you", "thx": "thanks",
+    "np": "no problem", "glhf": "good luck have fun", "ez": "easy",
+    "dc": "disconnected", "afk": "afk", "omw": "on my way", "brb": "be right back",
 }
+
+
+def expand_abbreviations(text: str) -> str:
+    """把句中的游戏缩写展开成完整英文，让机翻/LLM 能正确理解。"""
+
+    def repl(m: re.Match) -> str:
+        w = m.group(0)
+        return _ABBR_EXPAND.get(w.lower(), w)
+
+    return re.sub(r"\b[A-Za-z]{2,5}\b", repl, text)
+
+
+# 「英雄 + 伤害数字」报点：Jett 120 / Omen 1
+_HERO_DMG_RE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9\s\-'.]{1,16}?)\s+(\d{1,3})\s*$")
+# 防止 "wait 5" 这种被当成残血报点：英雄名必须首字母大写且不是常用词
+_STOP_WORDS = {
+    "wait", "and", "or", "for", "the", "you", "we", "they", "i", "a", "an",
+    "to", "is", "no", "not", "my", "your", "his", "her", "one", "two",
+    "three", "go", "come", "get", "let", "just", "now", "then", "here", "there",
+}
+
+
+def _looks_like_hero(name: str) -> bool:
+    """只有真正的特工名才算残血报点，避免 "wait 5" 这类误判。"""
+    return (name or "").strip().lower() in _terms.AGENT_KEYS
+
+
+def parse_hero_damage(text: str) -> str:
+    """把「Jett 120」「Omen one」翻译成中文报点。不像伤害报点就返回空。"""
+    s = (text or "").strip()
+    m = _HERO_DMG_RE.match(s)
+    if m:
+        hero, num = m.group(1).strip(), int(m.group(2))
+        if not _looks_like_hero(hero):
+            return ""
+        if 100 <= num <= 150:
+            return f"打了 {hero} {num}（对面残血）"
+        if 1 <= num <= 5:
+            return f"{hero} 极残（一枪）"
+        return ""
+    m2 = re.match(r"^\s*([A-Za-z][A-Za-z0-9\s\-'.]{1,16}?)\s+one\s*$", s, re.I)
+    if m2:
+        hero = m2.group(1).strip()
+        if _looks_like_hero(hero):
+            return f"{hero} 极残（一枪）"
+    return ""
 
 _LLM_SYSTEM = (
     "你是《无畏契约》(VALORANT) 队内语音实时翻译。把用户给的句子翻译成简洁、"
     "口语化、像真人队友喊话的目标语言。只输出译文本身，不要解释、不要引号、"
-    "不要加括号注释。游戏术语按国内/国际玩家习惯：eco=经济局、plant=下包、"
-    "defuse=拆包、op=大狙、one tap=一枪头、clutch=残局、rotate=转点、"
-    "ult=大招、lit=打残。不要使用俚语歧义表达。"
+    "不要加括号注释。\n"
+    "必须按下面这套固定译法，不要自创：\n"
+    "eco=经济局 half buy=半起 full buy=全起 force buy=强起 save=保枪\n"
+    "plant=下包 defuse=拆包 ninja defuse=偷包 stick=强拆 tap=假拆\n"
+    "peek=探头 trade=补枪 entry=进点 lurk=单摸 stack=赌点 rotate=转点\n"
+    "rush=一波冲 execute=爆点 retake=回防 fake=假打 split=夹击 default=默认控图\n"
+    "heaven=二楼 hell=下层 main=大道 short=小道 mid=中路 site=包点\n"
+    "rafters=高台 nest=巢室 elbow=弯道 catwalk=长径小道 window=窗口\n"
+    "flank=绕后 lit=打残 low=残血 one tap=一枪头 clutch=残局 op=大狙\n"
+    "nt=可惜 wp=打得好 mb=我的锅 afk=挂机 dc=掉线\n"
+    "特工名保留英文原文（Jett/Omen/Raze 等），不要音译。\n"
+    "如果源文是日语，日式术语按下面译：フランク=绕后/侧翼（不是人名弗兰克）"
+    "サイト=包点 スパイク=炸弹 設置=下包 解除=拆包 ローテート=转点 "
+    "エコー=经济局 敵=敌人 味方=队友 一人=还剩一个 残り=剩余 上=高处/楼上\n"
+    "武器固定译法：Vandal=暴徒（步枪，绝不能译成狙击枪，也不要译成战神）\n"
+    "Phantom=幻象 Operator/OP=大狙 Sheriff=神射 Spectre=恶灵 Guardian=捍卫者\n"
+    "Marshal=警长 Judge=判官 Bucky=重炮 Classic=制式 Ghost=鬼魅 Frenzy=狂弑\n"
+    "Stinger=刺针 Bulldog=斗牛犬 Odin=奥丁 Ares=战神 Knife=小刀\n"
+    "段位固定译法：Iron=黑铁 Bronze=青铜 Silver=白银 Gold=黄金 Platinum=铂金\n"
+    "Diamond=钻石 Ascendant=超凡入圣 Immortal=神话 Radiant=辐能"
 )
 
 _BING_TOKEN_TTL = 600.0
@@ -177,12 +183,20 @@ class Translator:
             return hit
 
         # 中文喊话直出（最快最准）
-        if src == "zh" and dst.startswith("en"):
-            direct = self._voice_line(text)
-            if direct:
-                self.backend_used = "script"
-                self._cache.put(key, direct)
-                return direct
+        if src == "zh":
+            if dst.startswith("en"):
+                direct = self._voice_line(text)
+                if direct:
+                    self.backend_used = "script"
+                    self._cache.put(key, direct)
+                    return direct
+            elif dst.startswith("ja"):
+                # 日服模式：中文 → 日语喊话
+                direct = self._voice_line(text, VOICE_LINES_JA)
+                if direct:
+                    self.backend_used = "script"
+                    self._cache.put(key, direct)
+                    return direct
 
         # 英文缩写/符号直出：+4=在家挂机、afk=挂机中 这类机翻必错的
         if src == "en" and dst.startswith("zh"):
@@ -191,12 +205,20 @@ class Translator:
                 self.backend_used = "script"
                 self._cache.put(key, direct)
                 return direct
+            # 「Jett 120」「Omen one」这种残血报点
+            dmg = parse_hero_damage(text)
+            if dmg:
+                self.backend_used = "script"
+                self._cache.put(key, dmg)
+                return dmg
 
         self._throttle()
+        # 送翻译前把 "nt"/"mb" 这类缩写展开，否则 LLM 会译成「牛逼」这种
+        send_text = expand_abbreviations(text) if src == "en" else text
         result = ""
         for backend in self._backend_order():
             try:
-                result = self._call(backend, text, src, dst)
+                result = self._call(backend, send_text, src, dst)
             except Exception as exc:
                 self._last_error = f"{backend}: {_short(exc)}"
                 result = ""
@@ -247,11 +269,11 @@ class Translator:
                 time.sleep(self._min_gap - gap)
             self._last_call = time.time()
 
-    def _voice_line(self, text: str) -> str:
+    def _voice_line(self, text: str, table: dict | None = None) -> str:
         norm = re.sub(r"[\s，。,.!！?？~～]+", "", text)
-        for zh, en in VOICE_LINES.items():
+        for zh, target in (table or VOICE_LINES).items():
             if re.sub(r"[\s，。,.!！?？~～]+", "", zh) == norm:
-                return en
+                return target
         return ""
 
     def _postprocess(self, out: str, src: str, dst: str, source_text: str) -> str:
@@ -383,14 +405,22 @@ class Translator:
         if not base or not model:
             return ""
         url = base + "/chat/completions"
-        lang_name = {"en": "英文", "zh": "中文"}.get(dst.split("-")[0], dst)
+        lang_name = {"en": "英文", "zh": "中文", "ja": "日语"}.get(
+            dst.split("-")[0], dst)
+        src_name = {"en": "英文", "ru": "俄语", "ja": "日语", "ko": "韩语",
+                    "zh": "中文", "es": "西班牙语", "pt": "葡萄牙语",
+                    "fr": "法语", "de": "德语", "tr": "土耳其语"}.get(
+            (src or "").split("-")[0], "")
+        # 队友可能说俄/日/韩，告诉模型源语种，否则它会按英文硬猜
+        ask = (f"把这句{src_name}翻译成{lang_name}：" if src_name
+               else f"翻译成{lang_name}：")
         payload = {
             "model": model,
             "temperature": 0.1,
             "max_tokens": 256,
             "messages": [
                 {"role": "system", "content": _LLM_SYSTEM},
-                {"role": "user", "content": f"翻译成{lang_name}：{text}"},
+                {"role": "user", "content": ask + text},
             ],
         }
         headers = {"Content-Type": "application/json"}

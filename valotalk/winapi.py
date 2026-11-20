@@ -7,6 +7,7 @@ from __future__ import annotations
 import ctypes
 import threading
 import time
+from collections import deque
 from ctypes import wintypes
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -161,8 +162,132 @@ class VirtualKeyHold:
 
 
 # ---------------- 热键轮询 ----------------
+# 低级鼠标钩子：GetAsyncKeyState 对 XBUTTON1/2 不可靠（微软文档说它主要管键盘），
+# 游戏里按侧键基本读不到。WH_MOUSE_LL 是系统级钩子，在 Raw Input 之前就能拿到事件。
+WH_MOUSE_LL = 14
+WM_XBUTTONDOWN = 0x020B
+WM_XBUTTONUP = 0x020C
+WM_QUIT = 0x0012
+
+
+class _MSLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ("pt", wintypes.POINT),
+        ("mouseData", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_void_p),
+    ]
+
+
+_LowLevelMouseProc = ctypes.WINFUNCTYPE(
+    ctypes.c_ssize_t, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM
+)
+
+# 显式声明签名：不声明的话 64 位 LPARAM 会被当成 32 位 int，溢出报错
+try:
+    user32.SetWindowsHookExW.argtypes = [ctypes.c_int, _LowLevelMouseProc,
+                                         wintypes.HINSTANCE, wintypes.DWORD]
+    user32.SetWindowsHookExW.restype = wintypes.HANDLE
+    user32.CallNextHookEx.argtypes = [wintypes.HANDLE, ctypes.c_int,
+                                      wintypes.WPARAM, wintypes.LPARAM]
+    user32.CallNextHookEx.restype = ctypes.c_ssize_t
+    user32.UnhookWindowsHookEx.argtypes = [wintypes.HANDLE]
+    user32.UnhookWindowsHookEx.restype = wintypes.BOOL
+    user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND,
+                                   wintypes.UINT, wintypes.UINT]
+    user32.GetMessageW.restype = ctypes.c_int
+except Exception:
+    pass
+
+
+class MouseHook:
+    """捕获鼠标侧键（XBUTTON1/2），游戏独占输入时也能拿到。
+
+    ⚠ 低级钩子的回调运行在系统输入链路上：Windows 必须等它返回才继续派发鼠标事件。
+    所以回调里只能做「往队列塞一个元组」这种微秒级操作 —— 一旦在里面创建线程或
+    调用重逻辑，GIL 被别的线程占住时就会**卡死整个系统的鼠标**。
+    真正的处理交给 HotkeyWatcher 的轮询线程消费 self._queue。
+    """
+
+    def __init__(self):
+        self._proc = None
+        self._hook = 0
+        self._thread: threading.Thread | None = None
+        self._tid = 0
+        self._handlers: dict[int, tuple] = {}   # vk -> (on_press, on_release)
+        self._queue: deque = deque(maxlen=256)
+        self.error: str | None = None
+        self.dropped = 0
+
+    def bind(self, vk: int, on_press=None, on_release=None) -> None:
+        self._handlers[vk] = (on_press, on_release)
+
+    def drain(self) -> list[tuple[int, bool]]:
+        """由轮询线程调用，取走回调塞进来的事件。"""
+        out: list[tuple[int, bool]] = []
+        while True:
+            try:
+                out.append(self._queue.popleft())
+            except IndexError:
+                break
+        return out
+
+    def start(self) -> bool:
+        if not self._handlers:
+            return False
+        if self._thread and self._thread.is_alive():
+            return True
+        self._thread = threading.Thread(target=self._run, name="mouse-hook", daemon=True)
+        self._thread.start()
+        time.sleep(0.05)
+        return bool(self._hook)
+
+    def stop(self) -> None:
+        if self._hook:
+            try:
+                user32.UnhookWindowsHookEx(self._hook)
+            except Exception:
+                pass
+            self._hook = 0
+        if self._tid:
+            try:
+                user32.PostThreadMessageW(self._tid, WM_QUIT, 0, 0)
+            except Exception:
+                pass
+        self._thread = None
+
+    def _run(self) -> None:
+        self._tid = ctypes.windll.kernel32.GetCurrentThreadId()
+        self._proc = _LowLevelMouseProc(self._callback)
+        self._hook = user32.SetWindowsHookExW(WH_MOUSE_LL, self._proc, None, 0)
+        if not self._hook:
+            self.error = f"SetWindowsHookEx 失败 err={ctypes.get_last_error()}"
+            return
+        msg = wintypes.MSG()
+        # 消息循环，钩子靠它活着。必须用 > 0：GetMessage 返回 -1 是错误
+        while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
+
+    def _callback(self, n_code, w_param, l_param):
+        # ★ 系统输入链路上执行：这里只允许塞队列，绝不创建线程、不做字符串处理
+        if n_code >= 0 and w_param in (WM_XBUTTONDOWN, WM_XBUTTONUP):
+            try:
+                info = ctypes.cast(l_param, ctypes.POINTER(_MSLLHOOKSTRUCT)).contents
+                which = (info.mouseData >> 16) & 0xFFFF   # XBUTTON1=1, XBUTTON2=2
+                if which == 1 or which == 2:
+                    if len(self._queue) >= self._queue.maxlen:
+                        self.dropped += 1
+                    self._queue.append((0x05 if which == 1 else 0x06,
+                                        w_param == WM_XBUTTONDOWN))
+            except Exception:
+                pass
+        return user32.CallNextHookEx(self._hook, n_code, w_param, l_param)
+
+
 class HotkeyWatcher:
-    """轮询 GetAsyncKeyState，检测按下/松开边沿。"""
+    """键盘走 GetAsyncKeyState 轮询，鼠标侧键走低级钩子。"""
 
     def __init__(self, poll_ms: int = 25):
         self.poll_ms = poll_ms
@@ -172,26 +297,41 @@ class HotkeyWatcher:
         self._state: dict[str, bool] = {}
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self.mouse_hook = MouseHook()
+        self._mouse_label_map: dict[int, str] = {}
 
     def bind(self, action: str, key: str, on_press=None, on_release=None) -> None:
         if not key:
             return
         try:
-            self._bindings[action] = vk_of(key)
+            vk = vk_of(key)
         except KeyError:
             return
+        if vk in MOUSE_KEYS:
+            # 鼠标键不进轮询表，交给钩子
+            self.mouse_hook.bind(vk, on_press, on_release)
+            self._mouse_labels[vk] = action
+            return
+        self._bindings[action] = vk
         if on_press:
             self._on_press[action] = on_press
         if on_release:
             self._on_release[action] = on_release
         self._state[action] = False
 
+    @property
+    def _mouse_labels(self) -> dict[int, str]:
+        return self._mouse_label_map
+
     def start(self) -> None:
-        if self._thread and self._thread.is_alive():
-            return
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._loop, name="hotkeys", daemon=True)
-        self._thread.start()
+        # 只要有键盘绑定或鼠标钩子，就需要轮询线程（鼠标队列也靠它消费）
+        if (self._bindings or self.mouse_hook._handlers) and not (
+                self._thread and self._thread.is_alive()):
+            self._stop.clear()
+            self._thread = threading.Thread(target=self._loop, name="hotkeys", daemon=True)
+            self._thread.start()
+        if self.mouse_hook._handlers:
+            self.mouse_hook.start()
 
     def stop(self) -> None:
         self._stop.set()
@@ -199,6 +339,7 @@ class HotkeyWatcher:
         if t and t.is_alive() and t is not threading.current_thread():
             t.join(timeout=1.0)
         self._thread = None
+        self.mouse_hook.stop()
 
     def reset(self) -> None:
         """清空所有绑定，用于界面上改键后重建。"""
@@ -207,6 +348,8 @@ class HotkeyWatcher:
         self._on_press.clear()
         self._on_release.clear()
         self._state.clear()
+        self._mouse_labels.clear()
+        self.mouse_hook = MouseHook()
 
     def _loop(self) -> None:
         while not self._stop.is_set():
@@ -223,6 +366,11 @@ class HotkeyWatcher:
                     cb = self._on_release.get(action)
                     if cb:
                         threading.Thread(target=_safe, args=(cb,), daemon=True).start()
+            # 消费鼠标钩子塞进来的事件（绝不能在钩子回调里做这件事）
+            try:
+                _dispatch_mouse_events(self)
+            except Exception:
+                pass
             time.sleep(self.poll_ms / 1000.0)
 
 
@@ -231,6 +379,18 @@ def _safe(fn) -> None:
         fn()
     except Exception:
         pass
+
+
+def _dispatch_mouse_events(watcher: "HotkeyWatcher") -> None:
+    """在轮询线程里消费钩子队列，避免在系统输入链路上做事。"""
+    hook = watcher.mouse_hook
+    for vk, down in hook.drain():
+        pair = hook._handlers.get(vk)
+        if not pair:
+            continue
+        cb = pair[0] if down else pair[1]
+        if cb:
+            threading.Thread(target=_safe, args=(cb,), daemon=True).start()
 
 
 # ---------------- 窗口样式 ----------------

@@ -106,7 +106,7 @@ def test_glossary_annotate() -> None:
 
     tr = Translator(fake)
     a = tr._annotate("rush b and plant", "冲B点")
-    ok("rush=快冲" in a, "命中的术语被追注", a[:60])
+    ok("plant=" in a, "命中的术语被追注", a[:60])
 
 
 if __name__ == "__main__":

@@ -88,6 +88,9 @@ _VOICE_RAW = [
     ("en-NG", "AbeoNeural", "男", "亲和"),
     ("en-TZ", "ImaniNeural", "女", "亲和"),
     ("en-TZ", "ElimuNeural", "男", "亲和"),
+    # 日语（日服模式用）
+    ("ja-JP", "KeitaNeural", "男", "友好"),
+    ("ja-JP", "NanamiNeural", "女", "友好"),
 ]
 
 VOICE_CATALOG: list[tuple[str, str]] = [
@@ -100,6 +103,16 @@ VOICE_CATALOG: list[tuple[str, str]] = [
 ]
 VOICE_BY_LABEL = {label: short for short, label in VOICE_CATALOG}
 LABEL_BY_VOICE = {short: label for short, label in VOICE_CATALOG}
+
+# 按语言分组的音色（服务器选择决定用哪一组）
+VOICE_CATALOG_BY_LANG: dict[str, list[tuple[str, str]]] = {
+    "en": [(s, l) for s, l in VOICE_CATALOG if s.startswith("en-")],
+    "ja": [(s, l) for s, l in VOICE_CATALOG if s.startswith("ja-")],
+}
+DEFAULT_VOICE = {
+    "en": "en-US-GuyNeural",
+    "ja": "ja-JP-KeitaNeural",
+}
 
 # 风格预设：(音色, pitch, rate)，None 表示不覆盖
 STYLE_PRESETS: dict[str, tuple[str, str, str] | None] = {
@@ -114,12 +127,22 @@ STYLE_PRESETS: dict[str, tuple[str, str, str] | None] = {
 
 PREVIEW_TEXT = "Enemy one tap on A site, watch the flank."
 
+# 游戏服务器（决定队友说什么语言）
+# 目前无畏契约只有这几类语音环境，俄服/韩服没有，所以只做英语和日语
+SERVER_CHOICES = {
+    "港/美服（英语）": "en",
+    "日服（日语）": "ja",
+}
+SERVER_BY_LABEL = dict(SERVER_CHOICES)
+LABEL_BY_SERVER = {v: k for k, v in SERVER_CHOICES.items()}
+
 
 @dataclass
 class Job:
     kind: str                 # teammates / me / chat
     pcm: np.ndarray | None = None
     text: str = ""            # chat 已有文本
+    detected_lang: str | None = None   # 自动检测出的语种
     t0: float = field(default_factory=time.time)
 
 
@@ -222,9 +245,23 @@ class App:
         self.cb_tts = self._device_row(dev, 2, "TTS 输出（VB-Cable Input）",
                                        "audio.tts_output_device")
 
-        ttk.Label(dev, text="TTS 音色：").grid(row=3, column=0, sticky="w", pady=2)
-        labels = [lab for _s, lab in VOICE_CATALOG]
-        cur_voice = str(self._get("tts.voice", "en-US-GuyNeural"))
+        ttk.Label(dev, text="游戏服务器：").grid(row=3, column=0, sticky="w", pady=2)
+        cur_lang = str(self._get("asr.lang_teammates", "en") or "en")
+        self.cb_server = ttk.Combobox(
+            dev, width=18, state="readonly", values=list(SERVER_CHOICES))
+        self.cb_server.set(LABEL_BY_SERVER.get(cur_lang, "港/美服（英语）"))
+        self.cb_server.grid(row=3, column=1, sticky="w", padx=8, pady=2)
+        self.cb_server.bind("<<ComboboxSelected>>", lambda _e: self._on_server_change())
+
+        ttk.Label(dev, text="TTS 音色：").grid(row=4, column=0, sticky="w", pady=2)
+        # 音色列表跟着服务器走：英服给 47 个英文音色，日服给 2 个日语音色
+        voice_group = VOICE_CATALOG_BY_LANG.get(
+            "ja" if cur_lang.startswith("ja") else "en", VOICE_CATALOG)
+        labels = [lab for _s, lab in voice_group]
+        cur_voice = str(self._get("tts.voice", ""))
+        if not cur_voice.startswith(("en-", "ja-")):
+            cur_voice = DEFAULT_VOICE["ja" if cur_lang.startswith("ja") else "en"]
+            self._set("tts.voice", cur_voice)
         cur_label = LABEL_BY_VOICE.get(cur_voice)
         if cur_label is None:                     # 配置文件里是别的音色
             cur_label = f"{cur_voice}（自定义）"
@@ -232,20 +269,20 @@ class App:
             VOICE_BY_LABEL[cur_label] = cur_voice
         self.cb_voice = ttk.Combobox(dev, width=36, state="readonly", values=labels)
         self.cb_voice.set(cur_label)
-        self.cb_voice.grid(row=3, column=1, sticky="ew", padx=8, pady=2)
+        self.cb_voice.grid(row=4, column=1, sticky="ew", padx=8, pady=2)
         self.cb_voice.bind("<<ComboboxSelected>>", lambda _e: self._on_voice_change())
 
-        ttk.Label(dev, text="风格预设：").grid(row=4, column=0, sticky="w", pady=2)
+        ttk.Label(dev, text="风格预设：").grid(row=5, column=0, sticky="w", pady=2)
         self.cb_style = ttk.Combobox(dev, width=16, state="readonly",
                                      values=list(STYLE_PRESETS.keys()))
         self.cb_style.set("原声（不调）")
-        self.cb_style.grid(row=4, column=1, sticky="w", padx=8, pady=2)
+        self.cb_style.grid(row=5, column=1, sticky="w", padx=8, pady=2)
         self.cb_style.bind("<<ComboboxSelected>>", lambda _e: self._on_style_change())
         ttk.Button(dev, text="试听", command=self._preview_voice).grid(
-            row=4, column=2, sticky="w")
+            row=5, column=2, sticky="w")
 
         row = ttk.Frame(dev)
-        row.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+        row.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(6, 0))
         ttk.Button(row, text="刷新设备", command=self._refresh_devices).pack(side="left")
         ttk.Button(row, text="自动识别", command=self._autofill_devices).pack(side="left", padx=6)
         ttk.Button(row, text="测试 TTS→游戏", command=self._test_tts).pack(side="left", padx=6)
@@ -306,10 +343,14 @@ class App:
             self.hk_vars[key] = var
             self.hk_combos[key] = cb
 
-        ttk.Label(hk, text="MOUSE4 / MOUSE5 = 鼠标侧键（后退 / 前进）；"
-                           "字母键故意不开放，防止打字时误触",
+        ttk.Label(hk, text="紧凑键盘（68/75 键）：F1-F12 与 HOME/END 多半没有独立键，"
+                           "建议用 PGUP / PGDN / INSERT（游戏里用不到）；"
+                           "` = 数字 1 左边那个键",
                   style="Hint.TLabel").grid(row=2, column=0, columnspan=8,
                                             sticky="w", pady=(6, 0))
+        ttk.Label(hk, text="MOUSE4 / MOUSE5 = 鼠标侧键（后退 / 前进）",
+                  style="Hint.TLabel").grid(row=3, column=0, columnspan=8,
+                                            sticky="w", pady=(2, 0))
         ttk.Button(hk, text="检测按键（才知道键盘真正发出什么）",
                    command=self._key_probe).grid(row=1, column=0, columnspan=3,
                                                  sticky="w", pady=(6, 0))
@@ -418,40 +459,67 @@ class App:
         threading.Thread(target=reload, daemon=True).start()
 
     def _key_probe(self) -> None:
-        """按住任意键，看键盘到底发出什么虚拟键码。用来确认 Fn 组合的真实行为。"""
+        """按住任意键，看键盘/鼠标到底发出什么。
+
+        键盘走 GetAsyncKeyState 轮询，鼠标侧键额外挂 WH_MOUSE_LL 钩子
+        （GetAsyncKeyState 对 XBUTTON 不可靠），两条路都显示出来。
+        """
         top = tk.Toplevel(self.root)
         top.title("按键检测")
-        top.geometry("420x180")
+        top.geometry("460x210")
         top.attributes("-topmost", True)
-        ttk.Label(top, text="按住你想用的那个键（含 Fn 组合），下面是实际键码",
-                  font=(FONT, 10)).pack(pady=(14, 6))
+        ttk.Label(top, text="按住你想用的那个键（含 Fn 组合 / 鼠标侧键）",
+                  font=(FONT, 10)).pack(pady=(12, 4))
         big = ttk.Label(top, text="等待按键…", font=(FONT, 16, "bold"),
                         foreground="#7DD3FC")
-        big.pack(pady=6)
+        big.pack(pady=4)
         hint = ttk.Label(top, text="", style="Hint.TLabel")
-        hint.pack(pady=4)
+        hint.pack(pady=2)
+        mouse_lbl = ttk.Label(top, text="鼠标钩子：启动中…", style="Hint.TLabel")
+        mouse_lbl.pack(pady=2)
 
         names = {v: k.upper() for k, v in winapi.VK.items()}
-        deadline = time.time() + 20
-        last_vk = 0
+        deadline = time.time() + 30
+        last_vk = [0]
+
+        # 侧键钩子：能捕获游戏里的 XBUTTON
+        hook = winapi.MouseHook()
+        hook_state = {"hits": 0}
+
+        def on_mouse(vk: int, down: bool):
+            if not down:
+                return
+            hook_state["hits"] += 1
+            name = "MOUSE4" if vk == 0x05 else "MOUSE5"
+            self.root.after(0, lambda: (
+                big.configure(text=f"VK 0x{vk:02X}   ({name})"),
+                mouse_lbl.configure(text=f"鼠标钩子：捕获到 {name} ✓"),
+                hint.configure(text="鼠标侧键可用，去面板把它设成触发键")))
+
+        for vk in (0x05, 0x06):
+            hook.bind(vk, on_press=lambda v=vk: on_mouse(v, True))
+        hook_ok = hook.start()
+        mouse_lbl.configure(
+            text=f"鼠标钩子：{'已安装 ✓ 按侧键试试' if hook_ok else '安装失败，见日志'}")
 
         def poll():
-            nonlocal last_vk
             if not top.winfo_exists():
+                hook.stop()
                 return
             if time.time() > deadline:
                 big.configure(text="超时，已停止")
+                hook.stop()
                 return
             for vk in range(0x01, 0xFF):
                 if winapi.user32.GetAsyncKeyState(vk) & 0x8000:
-                    if vk != last_vk:
-                        last_vk = vk
+                    if vk != last_vk[0]:
+                        last_vk[0] = vk
                         name = names.get(vk, "?")
                         big.configure(text=f"VK 0x{vk:02X}   ({name})")
                         if vk == 0x71:
                             hint.configure(text="这就是 F2，程序能识别 ✓")
                         elif vk == 0x32:
-                            hint.configure(text="这是数字 2 ！键盘没发出 F2 —— "
+                            hint.configure(text="这是数字 2！键盘没发出 F2 —— "
                                                 "游戏会切枪，程序也认不到")
                         elif 0x70 <= vk <= 0x7B:
                             hint.configure(text="F 区键，可以选")
@@ -460,10 +528,15 @@ class App:
                         else:
                             hint.configure(text="")
                     break
-                last_vk = 0 if last_vk == vk else last_vk
+                if last_vk[0] == vk:
+                    last_vk[0] = 0
             top.after(25, poll)
 
-        ttk.Button(top, text="关闭", command=top.destroy).pack(pady=6)
+        def close():
+            hook.stop()
+            top.destroy()
+
+        ttk.Button(top, text="关闭", command=close).pack(pady=6)
         poll()
 
     def _set_flag(self, name: str, value: bool) -> None:
@@ -499,6 +572,31 @@ class App:
         self.cfg.save()
         if not quiet:
             self.log("已自动识别设备，可在上面手动改。")
+
+    def _on_server_change(self) -> None:
+        label = self.cb_server.get()
+        lang = SERVER_BY_LABEL.get(label, "en")
+        self._set("asr.lang_teammates", lang)
+        self._refresh_voice_group(lang)
+        name = {"en": "英语", "ja": "日语"}.get(lang, lang)
+        self.log(f"游戏服务器：{label} → 队友语音按{name}识别，"
+                 f"我说的中文翻成{name}")
+
+    def _refresh_voice_group(self, lang: str) -> None:
+        """切换服务器时把音色列表换成对应语言的，并自动选默认音色。"""
+        group = VOICE_CATALOG_BY_LANG.get(lang) or VOICE_CATALOG
+        try:
+            self.cb_voice["values"] = [lab for _s, lab in group]
+        except Exception:
+            return
+        cur = str(self._get("tts.voice", ""))
+        if not cur.startswith(lang + "-"):
+            default = DEFAULT_VOICE.get(lang, group[0][0])
+            self._set("tts.voice", default)
+            self.cb_voice.set(LABEL_BY_VOICE.get(default, default))
+            self.log(f"TTS 音色已切换为 {default}")
+        else:
+            self.cb_voice.set(LABEL_BY_VOICE.get(cur, cur))
 
     def _on_voice_change(self) -> None:
         voice = VOICE_BY_LABEL.get(self.cb_voice.get(), "")
@@ -757,8 +855,13 @@ class App:
             # 模型失效（比如 CUDA 库缺失）时按节奏重试，不要每句都炸
             if not self.asr.loaded and not self._reload_asr():
                 continue
-            lang = (self._get("asr.lang_teammates", "en") if job.kind == "teammates"
-                    else self._get("asr.lang_me", "zh"))
+            # 队友语音：按界面选定的服区固定语种，不做自动检测
+            if job.kind == "teammates":
+                lang = str(self._get("asr.lang_teammates", "en") or "en")
+                if lang in ("auto", "detect", ""):
+                    lang = "en"
+            else:
+                lang = self._get("asr.lang_me", "zh")
             try:
                 text = self.asr.transcribe(job.pcm, lang)
             except Exception as exc:
@@ -767,6 +870,8 @@ class App:
             if not text:
                 continue
             job.text = text
+            # 自动检测出来的语种留给翻译层用（给 LLM 一个上下文提示）
+            job.detected_lang = getattr(self.asr, "last_language", None)
             try:
                 self.post_q.put_nowait(job)
             except queue.Full:
@@ -805,20 +910,24 @@ class App:
         if job.kind == "teammates":
             if not self.flags["team"]:
                 return
-            zh = self.translator.translate(job.text, "en", "zh-CN")
+            src = job.detected_lang or self._get("asr.lang_teammates", "en") or "en"
+            zh = self.translator.translate(job.text, src, "zh-CN")
             shown = zh or "（翻译失败）" + job.text
             self.log(f"队友：{job.text} → {zh}")
             self._overlay("队友", shown, job.text if zh else "")
         elif job.kind == "me":
             if not self.flags["me"] or self._muted_outgoing:
                 return
-            en = self.translator.translate(job.text, "zh", "en")
-            if not en:
+            # 我说中文 → 翻成队友听得懂的语言（英服英语 / 日服日语）
+            server_lang = str(self._get("asr.lang_teammates", "en") or "en")
+            target = "ja" if server_lang.startswith("ja") else "en"
+            out = self.translator.translate(job.text, "zh", target)
+            if not out:
                 self.log(f"[翻译失败] {job.text}")
                 return
-            self.log(f"我：{job.text} → {en}")
-            self._overlay("我", en, job.text)
-            self.tts.speak(en)
+            self.log(f"我：{job.text} → {out}")
+            self._overlay("我", out, job.text)
+            self.tts.speak(out)
         elif job.kind == "chat":
             if not self.flags["chat"] or not job.text:
                 return

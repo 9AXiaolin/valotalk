@@ -110,6 +110,15 @@ def _normalize(audio: np.ndarray) -> np.ndarray:
     return (audio * gain).astype(np.float32)
 
 
+# 按语种给的提示词，稳住同音字和战术术语
+_PROMPTS = {
+    "zh": "以下是普通话的句子，请使用简体中文。",
+    # 日语同音字极多（敵/適/的 都是 てき），不提示会把「敵」听成「適」
+    "ja": "VALORANTのゲーム内ボイスチャット。敵、フランク、サイト、スパイク、"
+          "ローテート、エコーなどの用語が出てきます。",
+}
+
+
 class WhisperASR:
     """线程安全的单模型封装。启动时实测 CUDA 是否真的能跑，跑不了自动退 CPU。"""
 
@@ -122,6 +131,9 @@ class WhisperASR:
         self.compute_type = None
         self.loaded = False
         self.load_error: str | None = None
+        # 自动检测模式下最近一次识别的语种与置信度，供日志/字幕显示
+        self.last_language: str = "?"
+        self.last_language_prob: float = 0.0
 
     # ---------------- 加载 ----------------
     def ensure_loaded(self, on_status=None) -> bool:
@@ -235,12 +247,15 @@ class WhisperASR:
         return ""
 
     # ---------------- 推理 ----------------
-    def transcribe(self, pcm16k: np.ndarray, language: str) -> str:
+    def transcribe(self, pcm16k: np.ndarray, language: str | None = None) -> str:
+        """language 由界面选的服务器决定（港/美=en，日=ja）。"""
         if self._model is None:
             return ""
         audio = _normalize(pcm16k)
         if audio.size < 1600:            # < 0.1s
             return ""
+        self.last_language = language or "?"
+        self.last_language_prob = 0.0
         try:
             with self._lock:
                 segments, _info = self._model.transcribe(
@@ -251,10 +266,12 @@ class WhisperASR:
                     condition_on_previous_text=False,
                     without_timestamps=True,
                     temperature=0.0,
-                    # 中文容易输出繁体（掩護我），这句 prompt 把它掰回简体
-                    initial_prompt=("以下是普通话的句子，请使用简体中文。"
-                                    if language == "zh" else None),
+                    # 中文防繁体、日语防同音字（敵/適），都靠这句 prompt
+                    initial_prompt=self._prompt_for(language),
                 )
+                self.last_language = getattr(_info, "language", None) or language or "?"
+                self.last_language_prob = float(
+                    getattr(_info, "language_probability", 0.0) or 0.0)
                 text = " ".join(seg.text for seg in segments)
         except Exception as exc:
             # 运行时崩了（多半是 CUDA 库在第一次计算时才加载）→ 标记失效，下次重建
@@ -266,6 +283,13 @@ class WhisperASR:
                 _MODEL = None
             return ""
         return _clean_text(text, language)
+
+    @staticmethod
+    def _prompt_for(language: str | None) -> str | None:
+        """按语种返回提示词：中文防繁体、日语防同音字。"""
+        if not language:
+            return None
+        return _PROMPTS.get(language)
 
 
 def _brief(exc: Exception) -> str:

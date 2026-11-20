@@ -13,7 +13,7 @@ from valotalk.config import CONFIG
 
 print("=== 词库规模 ===")
 print(f"  聊天缩写   {len(terms.ABBR_CHAT)} 条")
-print(f"  术语/短语 {len(terms.TERMS_PHRASES)} 条")
+print(f"  术语/短语 {len(terms.CALLS)} 条")
 print(f"  中文喊话   {len(terms.VOICE)} 条")
 print(f"  合并后 VALORANT_TERMS = {len(VALORANT_TERMS)} 条")
 print(f"  直出表     {len(_DIRECT_EN_ZH)} 条")

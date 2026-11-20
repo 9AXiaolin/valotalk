@@ -76,12 +76,14 @@ def test_style() -> None:
         if c.type(i) == "text":
             f = c.itemcget(i, "font")
             sizes.append(f)
-    main = [f for f in sizes if "-19" in f]
-    ok(bool(main), "主文字 19px", main[0] if main else str(sizes[:2]))
+    # 字号以当前配置为准（用户可以自己调），只验证渲染时用的是这个值
+    want = int(app._get("overlay.font_size") or 26)
+    main = [f for f in sizes if f"-{want}" in f]
+    ok(bool(main), f"主文字 {want}px（与配置一致）",
+       main[0] if main else str(sizes[:2]))
 
     print(f"      overlay.font_size={app._get('overlay.font_size')} "
           f"backdrop={app._get('overlay.backdrop')} outline={app._get('overlay.outline')}")
-    ok(app._get("overlay.font_size") == 19, "字号已从 26 降到 19")
     ok(app._get("overlay.backdrop") is False, "黑底已关闭")
     app.shutdown()
 

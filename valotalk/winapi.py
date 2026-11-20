@@ -442,6 +442,38 @@ def enable_dpi_awareness() -> None:
 BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
 IDLE_PRIORITY_CLASS = 0x00000040
 
+# Windows 11 的窗口圆角
+DWMWA_WINDOW_CORNER_PREFERENCE = 33
+DWMWCP_DEFAULT = 0
+DWMWCP_DONOTROUND = 1
+DWMWCP_ROUND = 2
+DWMWCP_ROUNDSMALL = 3
+
+
+def set_rounded_window(hwnd: int, mode: int = DWMWCP_ROUND) -> bool:
+    """让窗口四角变圆（Windows 11）。Win10 上会失败，忽略即可。"""
+    try:
+        dwm = ctypes.WinDLL("dwmapi")
+        val = ctypes.c_int(mode)
+        r = dwm.DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE,
+                                      ctypes.byref(val), ctypes.sizeof(val))
+        return r == 0
+    except Exception:
+        return False
+
+
+def set_dark_titlebar(hwnd: int, dark: bool = True) -> bool:
+    """标题栏深色（Win11 / 新版 Win10）。"""
+    try:
+        dwm = ctypes.WinDLL("dwmapi")
+        DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+        val = ctypes.c_int(1 if dark else 0)
+        r = dwm.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE,
+                                      ctypes.byref(val), ctypes.sizeof(val))
+        return r == 0
+    except Exception:
+        return False
+
 
 def set_low_priority() -> bool:
     """把自身降到「低于正常」，让游戏优先拿到 CPU 时间片。

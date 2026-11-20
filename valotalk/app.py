@@ -22,7 +22,7 @@ from tkinter import ttk
 import numpy as np
 
 from . import __version__
-from . import capture, winapi
+from . import capture, ui_theme as ui, winapi
 from .asr import WhisperASR
 from .config import CONFIG
 from .ocr import ChatOCR, LineDiffer, is_player_chat
@@ -192,69 +192,82 @@ class App:
     def _build_ui(self) -> None:
         self.root = tk.Tk()
         self.root.title(f"ValoTalk v{__version__} · 无畏契约实时翻译")
-        self.root.geometry("880x780")
-        self.root.minsize(780, 640)
-        self.root.configure(bg="#11151c")
+        self.root.geometry("980x720")
+        self.root.minsize(920, 660)
+        self.root.configure(bg=ui.BG)
+        ui.make_styles()
         if self._get("ui.panel_on_top", True):
             self.root.attributes("-topmost", True)
 
-        style = ttk.Style()
-        try:
-            style.theme_use("clam")
-        except Exception:
-            pass
-        style.configure("TFrame", background="#11151c")
-        style.configure("TLabel", background="#11151c", foreground="#dbe4ee",
-                        font=(FONT, 10))
-        style.configure("Head.TLabel", font=(FONT, 15, "bold"), foreground="#7DD3FC")
-        style.configure("Hint.TLabel", foreground="#7f8c9b", font=(FONT, 9))
-        style.configure("TCheckbutton", background="#11151c", foreground="#dbe4ee",
-                        font=(FONT, 10))
-        style.map("TCheckbutton", background=[("active", "#11151c")])
-        style.configure("TButton", font=(FONT, 10), padding=6)
-        style.configure("Run.TButton", font=(FONT, 11, "bold"))
+        outer = tk.Frame(self.root, bg=ui.BG)
+        outer.pack(fill="both", expand=True, padx=14, pady=12)
 
-        outer = ttk.Frame(self.root, padding=12)
-        outer.pack(fill="both", expand=True)
+        # ---------------- 顶部一栏 ----------------
+        head = tk.Frame(outer, bg=ui.BG)
+        head.pack(fill="x", pady=(0, 10))
 
-        head = ttk.Frame(outer)
-        head.pack(fill="x")
-        ttk.Label(head, text="ValoTalk", style="Head.TLabel").pack(side="left")
-        ttk.Label(head, text=f"v{__version__}", style="Hint.TLabel").pack(
-            side="left", padx=(5, 0))
-        self.state_lbl = ttk.Label(head, text="● 未启动", foreground="#f87171",
-                                   font=(FONT, 11, "bold"))
-        self.state_lbl.pack(side="left", padx=12)
-        self.meter_lbl = ttk.Label(head, text="", style="Hint.TLabel")
-        self.meter_lbl.pack(side="left", padx=4)
-        ttk.Label(head, text="模型").pack(side="right", padx=(0, 6))
-        self.model_var = tk.StringVar(value=str(self._get("asr.model", "small")))
-        cb_model = ttk.Combobox(head, textvariable=self.model_var, width=7, state="readonly",
-                                values=["tiny", "base", "small", "medium"])
-        cb_model.pack(side="right", padx=(0, 6))
-        cb_model.bind("<<ComboboxSelected>>", lambda _e: self._on_model_change())
-        ttk.Button(head, text="▶ 开始", style="Run.TButton",
-                   command=self.start).pack(side="right", padx=(0, 10))
-        ttk.Button(head, text="■ 停止", command=self.stop).pack(side="right", padx=6)
+        tk.Label(head, text="ValoTalk", bg=ui.BG, fg=ui.TEXT,
+                 font=(ui.FONT, 18, "bold")).pack(side="left")
+        tk.Label(head, text=f"v{__version__}", bg=ui.BG, fg=ui.TEXT3,
+                 font=(ui.FONT, 9)).pack(side="left", padx=(6, 0), pady=(7, 0))
+        self.state_lbl = tk.Label(head, text="● 未启动", bg=ui.BG, fg=ui.RED,
+                                  font=(ui.FONT, 10, "bold"))
+        self.state_lbl.pack(side="left", padx=(14, 0))
+        self.meter_lbl = tk.Label(head, text="", bg=ui.BG, fg=ui.TEXT2,
+                                  font=(ui.FONT, 9))
+        self.meter_lbl.pack(side="left", padx=(8, 0))
 
-        # ---- 设备 ----
-        dev = ttk.LabelFrame(outer, text=" 音频设备 ", padding=10)
-        dev.pack(fill="x", pady=(10, 6))
-        self.cb_game = self._device_row(dev, 0, "游戏输出（采队友语音）", "audio.game_output_device")
-        self.cb_mic = self._device_row(dev, 1, "我的麦克风", "audio.mic_device")
-        self.cb_tts = self._device_row(dev, 2, "TTS 输出（VB-Cable Input）",
-                                       "audio.tts_output_device")
+        ui.RoundButton(head, "▶ 开始", command=self.start, width=86, height=32,
+                       fill=ui.BLUE, bold=True, bg=ui.BG).pack(side="right")
+        ui.RoundButton(head, "■ 停止", command=self.stop, width=74, height=32,
+                       fill=ui.CARD2, bg=ui.BG).pack(side="right", padx=(0, 8))
+        mc = ui.RoundCombo(head, ["tiny", "base", "small", "medium"], width=92,
+                           height=32, bg=ui.BG)
+        mc.set(str(self._get("asr.model", "small")))
+        mc.pack(side="right", padx=(0, 6))
+        mc.bind_select(self._on_model_change)
+        self.model_var = mc.var
+        self.cb_model_ui = mc
+        tk.Label(head, text="模型", bg=ui.BG, fg=ui.TEXT2,
+                 font=(ui.FONT, 9)).pack(side="right", padx=(12, 5))
 
-        ttk.Label(dev, text="游戏服务器：").grid(row=3, column=0, sticky="w", pady=2)
+        # ---------------- 两列主体 ----------------
+        main = tk.Frame(outer, bg=ui.BG)
+        main.pack(fill="both", expand=True)
+
+        left = tk.Frame(main, bg=ui.BG)
+        left.pack(side="left", fill="both", expand=True, padx=(0, 7))
+        right = tk.Frame(main, bg=ui.BG)
+        right.pack(side="left", fill="both", expand=True, padx=(7, 0))
+
+        # ===== 左列：音频设备 =====
+        card = ui.RoundCard(left, pad=14)
+        card.pack(fill="x", pady=(0, 10))
+        body = card.body
+        tk.Label(body, text="音频设备", bg=ui.CARD, fg=ui.TEXT2,
+                 font=(ui.FONT, 9, "bold"), anchor="w").pack(fill="x", pady=(0, 8))
+
+        self.cb_game = self._device_row(body, "游戏输出", "audio.game_output_device")
+        self.cb_mic = self._device_row(body, "我的麦克风", "audio.mic_device")
+        self.cb_tts = self._device_row(body, "TTS 输出", "audio.tts_output_device")
+
+        # 服务器（就放在这里，打开就能看到）
+        row = tk.Frame(body, bg=ui.CARD)
+        row.pack(fill="x", pady=(6, 0))
+        tk.Label(row, text="游戏服务器", bg=ui.CARD, fg=ui.TEXT,
+                 font=(ui.FONT, ui.FS_SMALL), width=11, anchor="w").pack(side="left")
         cur_lang = str(self._get("asr.lang_teammates", "en") or "en")
-        self.cb_server = ttk.Combobox(
-            dev, width=18, state="readonly", values=list(SERVER_CHOICES))
-        self.cb_server.set(LABEL_BY_SERVER.get(cur_lang, "港/美服（英语）"))
-        self.cb_server.grid(row=3, column=1, sticky="w", padx=8, pady=2)
-        self.cb_server.bind("<<ComboboxSelected>>", lambda _e: self._on_server_change())
+        sc = ui.RoundCombo(row, list(SERVER_CHOICES), width=168, height=30)
+        sc.set(LABEL_BY_SERVER.get(cur_lang, "港/美服（英语）"))
+        sc.pack(side="left")
+        sc.bind_select(self._on_server_change)
+        self.cb_server = sc
 
-        ttk.Label(dev, text="TTS 音色：").grid(row=4, column=0, sticky="w", pady=2)
-        # 音色列表跟着服务器走：英服给 47 个英文音色，日服给 2 个日语音色
+        # 音色
+        row2 = tk.Frame(body, bg=ui.CARD)
+        row2.pack(fill="x", pady=(6, 0))
+        tk.Label(row2, text="TTS 音色", bg=ui.CARD, fg=ui.TEXT2,
+                 font=(ui.FONT, ui.FS_SMALL), width=11, anchor="w").pack(side="left")
         voice_group = VOICE_CATALOG_BY_LANG.get(
             "ja" if cur_lang.startswith("ja") else "en", VOICE_CATALOG)
         labels = [lab for _s, lab in voice_group]
@@ -263,156 +276,197 @@ class App:
             cur_voice = DEFAULT_VOICE["ja" if cur_lang.startswith("ja") else "en"]
             self._set("tts.voice", cur_voice)
         cur_label = LABEL_BY_VOICE.get(cur_voice)
-        if cur_label is None:                     # 配置文件里是别的音色
+        if cur_label is None:
             cur_label = f"{cur_voice}（自定义）"
             labels = [cur_label] + labels
             VOICE_BY_LABEL[cur_label] = cur_voice
-        self.cb_voice = ttk.Combobox(dev, width=36, state="readonly", values=labels)
-        self.cb_voice.set(cur_label)
-        self.cb_voice.grid(row=4, column=1, sticky="ew", padx=8, pady=2)
-        self.cb_voice.bind("<<ComboboxSelected>>", lambda _e: self._on_voice_change())
+        vc = ui.RoundCombo(row2, labels, width=248, height=30)
+        vc.set(cur_label)
+        vc.pack(side="left")
+        vc.bind_select(self._on_voice_change)
+        self.cb_voice = vc
+        ui.RoundButton(row2, "试听", command=self._preview_voice, width=56,
+                       height=30).pack(side="left", padx=(6, 0))
 
-        ttk.Label(dev, text="风格预设：").grid(row=5, column=0, sticky="w", pady=2)
-        self.cb_style = ttk.Combobox(dev, width=16, state="readonly",
-                                     values=list(STYLE_PRESETS.keys()))
-        self.cb_style.set("原声（不调）")
-        self.cb_style.grid(row=5, column=1, sticky="w", padx=8, pady=2)
-        self.cb_style.bind("<<ComboboxSelected>>", lambda _e: self._on_style_change())
-        ttk.Button(dev, text="试听", command=self._preview_voice).grid(
-            row=5, column=2, sticky="w")
+        # 风格
+        row3 = tk.Frame(body, bg=ui.CARD)
+        row3.pack(fill="x", pady=(6, 0))
+        tk.Label(row3, text="风格预设", bg=ui.CARD, fg=ui.TEXT2,
+                 font=(ui.FONT, ui.FS_SMALL), width=11, anchor="w").pack(side="left")
+        stc = ui.RoundCombo(row3, list(STYLE_PRESETS.keys()), width=168, height=30)
+        stc.set("原声（不调）")
+        stc.pack(side="left")
+        stc.bind_select(self._on_style_change)
+        self.cb_style = stc
 
-        row = ttk.Frame(dev)
-        row.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(6, 0))
-        ttk.Button(row, text="刷新设备", command=self._refresh_devices).pack(side="left")
-        ttk.Button(row, text="自动识别", command=self._autofill_devices).pack(side="left", padx=6)
-        ttk.Button(row, text="测试 TTS→游戏", command=self._test_tts).pack(side="left", padx=6)
-        dev.columnconfigure(1, weight=1)
+        row4 = tk.Frame(body, bg=ui.CARD)
+        row4.pack(fill="x", pady=(10, 0))
+        ui.RoundButton(row4, "刷新", command=self._refresh_devices,
+                       width=64, height=28).pack(side="left")
+        ui.RoundButton(row4, "自动识别", command=self._autofill_devices,
+                       width=84, height=28).pack(side="left", padx=(6, 0))
+        ui.RoundButton(row4, "测试 TTS", command=self._test_tts,
+                       width=84, height=28).pack(side="left", padx=(6, 0))
 
-        # ---- 开关 ----
-        sw = ttk.LabelFrame(outer, text=" 功能开关 ", padding=10)
-        sw.pack(fill="x", pady=6)
+        # ===== 左列：功能开关 =====
+        card2 = ui.RoundCard(left, pad=14)
+        card2.pack(fill="both", expand=True)
+        b2 = card2.body
+        tk.Label(b2, text="功能开关", bg=ui.CARD, fg=ui.TEXT2,
+                 font=(ui.FONT, 9, "bold"), anchor="w").pack(fill="x", pady=(0, 6))
+
         self.v_team = tk.BooleanVar(value=True)
         self.v_me = tk.BooleanVar(value=True)
         self.v_chat = tk.BooleanVar(value=True)
         self.v_orig = tk.BooleanVar(value=bool(self._get("overlay.show_original", True)))
         self.v_through = tk.BooleanVar(value=bool(self._get("overlay.click_through", True)))
-        ttk.Checkbutton(sw, text="队友语音 → 中文字幕", variable=self.v_team,
-                        command=lambda: self._set_flag("team", self.v_team.get())
-                        ).grid(row=0, column=0, sticky="w", padx=(0, 18))
-        self.chk_me = ttk.Checkbutton(
-            sw, text=self._me_label(), variable=self.v_me,
-            command=lambda: self._set_flag("me", self.v_me.get()))
-        self.chk_me.grid(row=0, column=1, sticky="w", padx=(0, 18))
-        ttk.Checkbutton(sw, text="左下角聊天翻译", variable=self.v_chat,
-                        command=lambda: self._set_flag("chat", self.v_chat.get())
-                        ).grid(row=0, column=2, sticky="w")
-        ttk.Checkbutton(sw, text="字幕显示原文", variable=self.v_orig,
-                        command=lambda: self._set("overlay.show_original", self.v_orig.get())
-                        ).grid(row=1, column=0, sticky="w", pady=(6, 0))
-        ttk.Checkbutton(sw, text="字幕穿透鼠标", variable=self.v_through,
-                        command=self._on_through_toggle).grid(row=1, column=1, sticky="w",
-                                                              pady=(6, 0))
         self.v_cpu = tk.BooleanVar(value=str(self._get("asr.device", "auto")) == "cpu")
-        ttk.Checkbutton(sw, text="识别用 CPU（不抢显卡，稍慢）", variable=self.v_cpu,
-                        command=self._on_cpu_toggle).grid(row=2, column=0, sticky="w",
-                                                          pady=(6, 0))
-        ttk.Button(sw, text="字幕贴回屏幕下方",
-                   command=lambda: self.overlay.reset_position()).grid(
-            row=1, column=2, sticky="w", pady=(6, 0))
 
-        # ---- 快捷键 ----
-        hk = ttk.LabelFrame(outer, text=" 快捷键（改完立刻生效） ", padding=10)
-        hk.pack(fill="x", pady=6)
+        for text, var, cb in [
+            ("队友语音 → 中文字幕", self.v_team,
+             lambda: self._set_flag("team", self.v_team.get())),
+            (self._me_label(), self.v_me,
+             lambda: self._set_flag("me", self.v_me.get())),
+            ("左下角聊天翻译", self.v_chat,
+             lambda: self._set_flag("chat", self.v_chat.get())),
+            ("字幕显示原文", self.v_orig,
+             lambda: self._set("overlay.show_original", self.v_orig.get())),
+            ("字幕穿透鼠标", self.v_through, self._on_through_toggle),
+            ("识别用 CPU（不抢显卡）", self.v_cpu, self._on_cpu_toggle),
+        ]:
+            tr = ui.ToggleRow(b2, text, var, command=cb)
+            tr.pack(fill="x", pady=1)
+            if var is self.v_me:
+                self.chk_me = tr
+
+        # ===== 右列：快捷键 =====
+        card3 = ui.RoundCard(right, pad=14)
+        card3.pack(fill="x", pady=(0, 10))
+        b3 = card3.body
+        tk.Label(b3, text="快捷键（改完立刻生效）", bg=ui.CARD, fg=ui.TEXT2,
+                 font=(ui.FONT, 9, "bold"), anchor="w").pack(fill="x", pady=(0, 6))
+
         self.hk_vars: dict[str, tk.StringVar] = {}
-        self.hk_combos: dict[str, ttk.Combobox] = {}
-        specs = [
-            ("ptt", "说中文"),
-            ("toggle_click_through", "字幕穿透"),
-            ("clear_overlay", "清屏"),
-            ("toggle_mute_outgoing", "静音输出"),
-        ]
+        self.hk_combos: dict = {}
+        specs = [("ptt", "说中文"), ("toggle_click_through", "穿透"),
+                 ("clear_overlay", "清屏"), ("toggle_mute_outgoing", "静音")]
         cur = self._get("hotkeys", {}) or {}
-        for i, (key, label) in enumerate(specs):
-            ttk.Label(hk, text=label + "：").grid(row=0, column=i * 2, sticky="e",
-                                                  padx=(10 if i else 0, 3))
-            var = tk.StringVar(value=str(cur.get(key, "")).upper())
-            cb = ttk.Combobox(hk, textvariable=var, width=10, state="readonly",
-                             values=winapi.HOTKEY_CHOICES)
-            cb.grid(row=0, column=i * 2 + 1, sticky="w")
-            cb.bind("<<ComboboxSelected>>", lambda _e: self._apply_hotkeys())
-            self.hk_vars[key] = var
-            self.hk_combos[key] = cb
+        hk_row = tk.Frame(b3, bg=ui.CARD)
+        hk_row.pack(fill="x")
+        for key, label in specs:
+            cell = tk.Frame(hk_row, bg=ui.CARD)
+            cell.pack(side="left", padx=(0, 6))
+            tk.Label(cell, text=label, bg=ui.CARD, fg=ui.TEXT2,
+                     font=(ui.FONT, ui.FS_SMALL), anchor="w").pack(anchor="w")
+            rc = ui.RoundCombo(cell, winapi.HOTKEY_CHOICES, width=96, height=28)
+            rc.set(str(cur.get(key, "")).upper())
+            rc.pack()
+            rc.bind_select(self._apply_hotkeys)
+            self.hk_vars[key] = rc.var
+            self.hk_combos[key] = rc
 
-        ttk.Label(hk, text="紧凑键盘（68/75 键）：F1-F12 与 HOME/END 多半没有独立键，"
-                           "建议用 PGUP / PGDN / INSERT（游戏里用不到）；"
-                           "` = 数字 1 左边那个键",
-                  style="Hint.TLabel").grid(row=2, column=0, columnspan=8,
-                                            sticky="w", pady=(6, 0))
-        ttk.Label(hk, text="MOUSE4 / MOUSE5 = 鼠标侧键（后退 / 前进）",
-                  style="Hint.TLabel").grid(row=3, column=0, columnspan=8,
-                                            sticky="w", pady=(2, 0))
-        ttk.Button(hk, text="检测按键（才知道键盘真正发出什么）",
-                   command=self._key_probe).grid(row=1, column=0, columnspan=3,
-                                                 sticky="w", pady=(6, 0))
+        sub = tk.Frame(b3, bg=ui.CARD)
+        sub.pack(fill="x", pady=(8, 0))
+        ui.RoundButton(sub, "检测按键", command=self._key_probe,
+                       width=84, height=28).pack(side="left")
+        ui.RoundButton(sub, "字幕贴回下方",
+                       command=lambda: self.overlay.reset_position(),
+                       width=112, height=28).pack(side="left", padx=(6, 0))
 
-        # ---- 聊天区域 / 翻译后端 ----
-        box = ttk.LabelFrame(outer, text=" 聊天区域 & 翻译后端 ", padding=10)
-        box.pack(fill="x", pady=6)
-        r0 = ttk.Frame(box)
-        r0.pack(fill="x")
-        ttk.Label(r0, text="聊天框区域：").pack(side="left")
-        self.region_lbl = ttk.Label(r0, text="未设置", style="Hint.TLabel")
-        self.region_lbl.pack(side="left")
-        ttk.Button(r0, text="框选左下角聊天", command=self._pick_region).pack(side="left", padx=10)
+        # ===== 右列：聊天区域 & 翻译 =====
+        card4 = ui.RoundCard(right, pad=14)
+        card4.pack(fill="x", pady=(0, 10))
+        b4 = card4.body
+        tk.Label(b4, text="聊天区域 & 翻译后端", bg=ui.CARD, fg=ui.TEXT2,
+                 font=(ui.FONT, 9, "bold"), anchor="w").pack(fill="x", pady=(0, 6))
 
-        r1 = ttk.Frame(box)
-        r1.pack(fill="x", pady=(8, 0))
-        ttk.Label(r1, text="翻译：").pack(side="left")
+        reg = tk.Frame(b4, bg=ui.CARD)
+        reg.pack(fill="x")
+        tk.Label(reg, text="聊天区域", bg=ui.CARD, fg=ui.TEXT2,
+                 font=(ui.FONT, ui.FS_SMALL), width=9, anchor="w").pack(side="left")
+        self.region_lbl = tk.Label(reg, text="未设置", bg=ui.CARD, fg=ui.TEXT3,
+                                   font=(ui.FONT, ui.FS_SMALL), anchor="w")
+        self.region_lbl.pack(side="left", padx=(0, 8))
+        ui.RoundButton(reg, "框选", command=self._pick_region,
+                       width=56, height=28).pack(side="left")
+
+        tr_row = tk.Frame(b4, bg=ui.CARD)
+        tr_row.pack(fill="x", pady=(8, 0))
+        tk.Label(tr_row, text="翻译", bg=ui.CARD, fg=ui.TEXT2,
+                 font=(ui.FONT, ui.FS_SMALL), width=9, anchor="w").pack(side="left")
         self.backend = tk.StringVar(value=self._get("translate.backend", "auto"))
-        ttk.Combobox(r1, textvariable=self.backend, width=8, state="readonly",
-                     values=["auto", "google", "llm"]).pack(side="left")
-        self.backend.trace_add("write", lambda *_: self._set(
-            "translate.backend", self.backend.get()))
-        ttk.Label(r1, text="  LLM base_url：").pack(side="left")
-        self.e_base = ttk.Entry(r1, width=26)
-        self.e_base.insert(0, self._get("translate.llm.base_url", ""))
+        bc = ui.RoundCombo(tr_row, ["auto", "llm", "bing", "google"], width=88, height=28)
+        bc.set(self.backend.get())
+        bc.pack(side="left")
+        bc.var.trace_add("write", lambda *_: self._set(
+            "translate.backend", bc.var.get()))
+        self.cb_backend_ui = bc
+
+        # base_url 占一行，model / key / 保存 另起一行（右列窄，挤一行会裁掉按钮）
+        llm_row = tk.Frame(b4, bg=ui.CARD)
+        llm_row.pack(fill="x", pady=(8, 0))
+        tk.Label(llm_row, text="LLM", bg=ui.CARD, fg=ui.TEXT2,
+                 font=(ui.FONT, ui.FS_SMALL), width=9, anchor="w").pack(side="left")
+        self.e_base = ui.RoundEntry(llm_row, width=290, height=28)
+        self.e_base.set(self._get("translate.llm.base_url", ""))
         self.e_base.pack(side="left")
 
-        r2 = ttk.Frame(box)
-        r2.pack(fill="x", pady=(6, 0))
-        ttk.Label(r2, text="model：").pack(side="left")
-        self.e_model = ttk.Entry(r2, width=18)
-        self.e_model.insert(0, self._get("translate.llm.model", ""))
+        llm_row2 = tk.Frame(b4, bg=ui.CARD)
+        llm_row2.pack(fill="x", pady=(6, 0))
+        tk.Label(llm_row2, text="", bg=ui.CARD, width=9,
+                 font=(ui.FONT, ui.FS_SMALL)).pack(side="left")
+        self.e_model = ui.RoundEntry(llm_row2, width=130, height=28)
+        self.e_model.set(self._get("translate.llm.model", ""))
         self.e_model.pack(side="left")
-        ttk.Label(r2, text="  api_key：").pack(side="left")
-        self.e_key = ttk.Entry(r2, width=30, show="*")
-        self.e_key.insert(0, self._get("translate.llm.api_key", ""))
-        self.e_key.pack(side="left")
-        ttk.Button(r2, text="保存", command=self._save_llm).pack(side="left", padx=8)
+        self.e_key = ui.RoundEntry(llm_row2, width=160, height=28, show="*")
+        self.e_key.set(self._get("translate.llm.api_key", ""))
+        self.e_key.pack(side="left", padx=(6, 0))
+        ui.RoundButton(llm_row2, "保存", command=self._save_llm,
+                       width=56, height=28).pack(side="left", padx=(6, 0))
 
-        # ---- 日志 ----
-        lg = ttk.LabelFrame(outer, text=" 运行日志 ", padding=8)
-        lg.pack(fill="both", expand=True, pady=(6, 0))
-        self.txt = tk.Text(lg, height=14, bg="#0b0f14", fg="#cbd5e1", insertbackground="#fff",
-                           font=("Consolas", 9), relief="flat", wrap="word")
+        # ===== 右列：日志 =====
+        card5 = ui.RoundCard(right, pad=14)
+        card5.pack(fill="both", expand=True)
+        b5 = card5.body
+        tk.Label(b5, text="运行日志", bg=ui.CARD, fg=ui.TEXT2,
+                 font=(ui.FONT, 9, "bold"), anchor="w").pack(fill="x", pady=(0, 6))
+
+        log_wrap = tk.Frame(b5, bg=ui.CARD2)
+        log_wrap.pack(fill="both", expand=True)
+        self.txt = tk.Text(log_wrap, height=6, bg=ui.CARD2, fg=ui.TEXT2,
+                           insertbackground=ui.TEXT, font=(ui.FONT, ui.FS_SMALL),
+                           relief="flat", bd=0, highlightthickness=0,
+                           wrap="word", padx=8, pady=6)
         self.txt.pack(side="left", fill="both", expand=True)
-        sb = ttk.Scrollbar(lg, command=self.txt.yview)
+        sb = ttk.Scrollbar(log_wrap, command=self.txt.yview,
+                           style="Vertical.TScrollbar")
         sb.pack(side="right", fill="y")
         self.txt.configure(yscrollcommand=sb.set)
         self.txt.configure(state="disabled")
 
         self._refresh_devices(initial=True)
 
-    def _device_row(self, parent, row: int, label: str, key: str) -> ttk.Combobox:
-        ttk.Label(parent, text=label + "：").grid(row=row, column=0, sticky="w", pady=2)
-        cb = ttk.Combobox(parent, width=52, state="readonly")
-        cb.grid(row=row, column=1, sticky="ew", padx=8, pady=2)
-        cb.set(self._get(key, "") or "")
-        cb.bind("<<ComboboxSelected>>", lambda _e, k=key, c=cb: self._set(k, c.get()))
-        ttk.Label(parent, text="").grid(row=row, column=2)
-        return cb
+        # Windows 11 窗口圆角 + 深色标题栏（Win10 上这两个调用会静默失败）
+        try:
+            self.root.update_idletasks()
+            hwnd = winapi.top_level_hwnd(self.root)
+            winapi.set_rounded_window(hwnd, winapi.DWMWCP_ROUND)
+            winapi.set_dark_titlebar(hwnd, True)
+        except Exception:
+            pass
 
-    # ============================================================ 设备
+    def _device_row(self, parent, label: str, key: str):
+        """一行设备选择：标签 + 圆角下拉。"""
+        row = tk.Frame(parent, bg=ui.CARD)
+        row.pack(fill="x", pady=3)
+        tk.Label(row, text=label, bg=ui.CARD, fg=ui.TEXT2,
+                 font=(ui.FONT, ui.FS_SMALL), width=11, anchor="w").pack(side="left")
+        rc = ui.RoundCombo(row, [], width=248, height=30)
+        rc.set(self._get(key, "") or "")
+        rc.pack(side="left")
+        rc.bind_select(lambda: self._set(key, rc.get()))
+        return rc
+
     def _on_model_change(self) -> None:
         size = self.model_var.get()
         self._set("asr.model", size)

@@ -160,6 +160,7 @@ class Translator:
         self._setup_proxy()
         self._last_error = ""
         self.backend_used = ""
+        self.last_usage: dict = {}     # 最近一次 LLM 调用的 usage（看缓存命中用）
         self._min_gap = 0.12
         self._last_call = 0.0
         self._rl_lock = threading.Lock()
@@ -414,22 +415,40 @@ class Translator:
         # 队友可能说俄/日/韩，告诉模型源语种，否则它会按英文硬猜
         ask = (f"把这句{src_name}翻译成{lang_name}：" if src_name
                else f"翻译成{lang_name}：")
+
+        # prompt caching：system prompt 每句都要重传（约 560 tokens），
+        # 标记成 ephemeral 让服务端缓存它，命中部分按低价计费。
+        # 通义本来就会自动缓存（实测不标记也命中 384/561），
+        # 标记后能到 448/561，多省一点。不支持该格式的接口会自动降级。
+        use_cache = bool(self._get("translate.llm.prompt_cache", True))
+        sys_content = ([{"type": "text", "text": _LLM_SYSTEM,
+                         "cache_control": {"type": "ephemeral"}}]
+                       if use_cache else _LLM_SYSTEM)
         payload = {
             "model": model,
             "temperature": 0.1,
             "max_tokens": 256,
             "messages": [
-                {"role": "system", "content": _LLM_SYSTEM},
+                {"role": "system", "content": sys_content},
                 {"role": "user", "content": ask + text},
             ],
         }
         headers = {"Content-Type": "application/json"}
         if key:
             headers["Authorization"] = f"Bearer {key}"
+        timeout = float(self._get("translate.llm.timeout", 10))
         r = self._session.post(url, data=json.dumps(payload), headers=headers,
-                               timeout=float(self._get("translate.llm.timeout", 10)))
+                               timeout=timeout)
+        if r.status_code == 400 and use_cache:
+            # 有些兼容接口不认 content 数组 / cache_control，退回纯字符串重试
+            payload["messages"][0]["content"] = _LLM_SYSTEM
+            r = self._session.post(url, data=json.dumps(payload), headers=headers,
+                                   timeout=timeout)
         r.raise_for_status()
         data = r.json()
+        # 把缓存命中情况记下来，方便在日志里看省钱效果
+        usage = data.get("usage", {}) or {}
+        self.last_usage = usage
         return (data["choices"][0]["message"]["content"] or "").strip().strip('"“”')
 
 

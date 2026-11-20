@@ -22,7 +22,7 @@ from tkinter import ttk
 import numpy as np
 
 from . import __version__
-from . import capture, ui_theme as ui, winapi
+from . import capture, remote, ui_theme as ui, winapi
 from .asr import WhisperASR
 from .config import CONFIG
 from .ocr import ChatOCR, LineDiffer, is_player_chat
@@ -177,6 +177,19 @@ class App:
         self._chat_thread: threading.Thread | None = None
 
         self.hotkeys = winapi.HotkeyWatcher()
+        # 手机遥控：游戏 Raw Input 独占键鼠时，热键在游戏里根本收不到。
+        # 手机走 WiFi，绕开整条输入通道 —— 按住手机按钮 == 按下 PTT。
+        self.remote = remote.RemoteControl(
+            on_down=self._ptt_down,
+            on_up=self._ptt_up,
+            on_clear=self._remote_clear,
+            on_mute=self._toggle_mute_outgoing,
+            get_state=lambda: {"running": self._running,
+                               "muted": self._muted_outgoing},
+            log=self.log,
+            port=int(self._get("remote.port", 8765) or 8765),
+            token=str(self._get("remote.token", "") or ""),
+        )
         self._build_ui()
         self._bind_hotkeys()
 
@@ -185,6 +198,9 @@ class App:
             self.overlay.bind_drag()
 
         self.root.after(40, self._pump_ui)
+        self.root.after(150, self._start_remote)
+        # 等游戏进程可查再判权限（游戏没开时 keyinject_blocked 返回 False）
+        self.root.after(1800, self._check_permission)
         self.root.after(300, self._autostart)
         self.root.protocol("WM_DELETE_WINDOW", self.shutdown)
 
@@ -308,6 +324,21 @@ class App:
         ui.RoundButton(row4, "测试 TTS", command=self._test_tts,
                        width=84, height=28).pack(side="left", padx=(6, 0))
 
+        # 权限告警：游戏 High / 我们 Medium 时，模拟的 V 会被系统丢掉
+        self.perm_card = card
+        self.perm_lbl = tk.Label(body, text="", bg=ui.CARD, fg=ui.RED,
+                                 font=(ui.FONT, ui.FS_SMALL), anchor="w",
+                                 justify="left", wraplength=330)
+        self.perm_lbl.pack(fill="x", pady=(8, 0))
+        self.perm_row = tk.Frame(body, bg=ui.CARD)
+        ui.RoundButton(self.perm_row, "以管理员重启", command=self._relaunch_admin,
+                       width=118, height=28, fill=ui.BLUE, bold=True,
+                       bg=ui.CARD).pack(side="left")
+        self.perm_row.pack(fill="x", pady=(6, 0))
+        # 默认收起：没权限问题时不该占地方
+        self.perm_lbl.pack_forget()
+        self.perm_row.pack_forget()
+
         # ===== 左列：功能开关 =====
         card2 = ui.RoundCard(left, pad=14)
         card2.pack(fill="both", expand=True)
@@ -372,6 +403,17 @@ class App:
         ui.RoundButton(sub, "字幕贴回下方",
                        command=lambda: self.overlay.reset_position(),
                        width=112, height=28).pack(side="left", padx=(6, 0))
+
+        # 手机遥控：游戏独占键鼠时热键进不去，手机点一下才是可靠的办法
+        rm_row = tk.Frame(b3, bg=ui.CARD)
+        rm_row.pack(fill="x", pady=(8, 0))
+        tk.Label(rm_row, text="手机", bg=ui.CARD, fg=ui.TEXT2,
+                 font=(ui.FONT, ui.FS_SMALL), width=5, anchor="w").pack(side="left")
+        self.remote_lbl = tk.Label(rm_row, text="启动中…", bg=ui.CARD, fg=ui.TEXT3,
+                                   font=(ui.FONT, ui.FS_SMALL), anchor="w")
+        self.remote_lbl.pack(side="left")
+        ui.RoundButton(rm_row, "二维码", command=self._show_remote_qr,
+                       width=58, height=26).pack(side="right")
 
         # ===== 右列：聊天区域 & 翻译 =====
         card4 = ui.RoundCard(right, pad=14)
@@ -768,6 +810,13 @@ class App:
         self.hotkeys.start()
 
     def _ptt_down(self) -> None:
+        # 按下这一刻从干净缓冲开始 —— 否则上一次残留的音频会混进这句
+        # （手机连按两下时尤其明显）
+        if self._seg_me is not None:
+            try:
+                self._seg_me.reset()
+            except Exception:
+                pass
         self._me_armed = True
         self._ui_state("● 正在听你说…", "#fbbf24")
 
@@ -785,6 +834,151 @@ class App:
     def _toggle_mute_outgoing(self) -> None:
         self._muted_outgoing = not self._muted_outgoing
         self.log("英文语音输出：" + ("已暂停" if self._muted_outgoing else "已恢复"))
+
+    # ============================================================ 手机遥控
+    def _remote_clear(self) -> None:
+        self._ui_call(self.overlay, "clear")
+
+    def _ensure_remote_token(self) -> str:
+        """没设口令就自动生成一个并写回 config。
+
+        为什么默认要口令：宿舍 / 校园 / 咖啡厅的 WiFi 在 Windows 眼里是
+        「公用网络」，同一个网段里任何人都能扫到这个端口。口令藏在二维码
+        和地址里，本人扫一下就行，不影响使用。
+        """
+        tok = str(self._get("remote.token", "") or "").strip()
+        if tok:
+            return tok
+        if not self._get("remote.auto_token", True):
+            self.log("[手机] 未设口令且关掉了 auto_token —— 同一网段的人都能控制")
+            return ""
+        import secrets
+        tok = secrets.token_urlsafe(9)          # 12 个字符，够用又不长
+        self._set("remote.token", tok)
+        return tok
+
+    def _start_remote(self) -> None:
+        def label(text: str, color: str) -> None:
+            def apply():
+                try:
+                    self.remote_lbl.configure(text=text, foreground=color)
+                except Exception:
+                    pass
+            self._uiq.put(apply)
+
+        if not self._get("remote.enabled", True):
+            label("已关闭", ui.TEXT3)
+            return
+        self.remote.token = self._ensure_remote_token()
+        url = self.remote.start()
+        if url:
+            # 标签只显示 ip:port，口令藏在二维码/复制里 —— 全写出来会挤掉按钮
+            label(f"{self.remote.ip}:{self.remote.port}", ui.BLUE)
+            self.log(f"[手机] 遥控已开启：{self.remote.ip}:{self.remote.port}"
+                     f"（点「二维码」扫码，或「复制」拿带口令的完整地址）")
+            others = [ip for ip in remote.local_ips() if ip != self.remote.ip]
+            if others:
+                self.log("[手机] 连不上就换这些地址试：" +
+                         "  ".join(f"{ip}:{self.remote.port}" for ip in others))
+            self.log("       手机连同一个 WiFi，扫码打开，按住或点一下大圆按钮说话")
+            threading.Thread(target=self._check_firewall, daemon=True).start()
+        else:
+            label("启动失败", ui.RED)
+            self.log(f"[手机] 遥控启动失败：{self.remote.error}")
+            self.log("       Windows 防火墙可能挡住了，点「二维码」→「放行防火墙」")
+
+    def _copy_remote(self) -> None:
+        url = self.remote.url
+        if not url:
+            self.log("[手机] 还没启动，稍等一下")
+            return
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(url)
+            self.log(f"[手机] 已复制：{url}")
+        except Exception as e:
+            self.log(f"[手机] 复制失败：{e}")
+
+    def _show_remote_qr(self) -> None:
+        """弹二维码 —— 总比让用户在手机上敲 IP 强。"""
+        url = self.remote.url
+        if not url:
+            self.log("[手机] 还没启动，稍等一下")
+            return
+        try:
+            import qrcode
+            from PIL import Image, ImageTk
+        except Exception as e:
+            self.log(f"[手机] 生成二维码需要 qrcode + Pillow：{e}")
+            self._copy_remote()
+            return
+
+        top = tk.Toplevel(self.root)
+        top.title("手机遥控")
+        top.configure(bg=ui.BG)
+        top.attributes("-topmost", True)
+        top.resizable(False, False)
+
+        qr = qrcode.QRCode(box_size=8, border=1,
+                           error_correction=qrcode.constants.ERROR_CORRECT_M)
+        qr.add_data(url)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="#000000", back_color="#FFFFFF").convert("RGB")
+        img = img.resize((250, 250), Image.LANCZOS)
+        photo = ImageTk.PhotoImage(img)
+
+        white = tk.Frame(top, bg="#FFFFFF", padx=12, pady=12)
+        white.pack(padx=20, pady=(20, 12))
+        lbl = tk.Label(white, image=photo, bg="#FFFFFF", bd=0)
+        lbl.image = photo          # 不存引用会被回收，图就白了
+        lbl.pack()
+
+        tk.Label(top, text="手机连同一个 WiFi，扫码打开",
+                 bg=ui.BG, fg=ui.TEXT2, font=(ui.FONT, 10)).pack()
+        tk.Label(top, text=url.replace("http://", ""), bg=ui.BG, fg=ui.BLUE,
+                 font=(ui.FONT, 9), wraplength=300, justify="center").pack(pady=(4, 12))
+
+        row = tk.Frame(top, bg=ui.BG)
+        row.pack(pady=(0, 8))
+        ui.RoundButton(row, "复制网址", command=self._copy_remote,
+                       width=104, height=32, bg=ui.BG).pack(side="left")
+        ui.RoundButton(row, "放行防火墙", command=self._open_firewall,
+                       width=104, height=32, bg=ui.BG).pack(side="left", padx=(8, 0))
+
+        others = [ip for ip in remote.local_ips() if ip != self.remote.ip]
+        if others:
+            tk.Label(top, text="连不上就换：" +
+                     "  ".join(f"{ip}:{self.remote.port}" for ip in others),
+                     bg=ui.BG, fg=ui.TEXT3, font=(ui.FONT, 8)).pack(pady=(0, 14))
+        else:
+            tk.Frame(top, bg=ui.BG, height=14).pack()
+
+        top.update_idletasks()
+        w, h = top.winfo_width(), top.winfo_height()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - w) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - h) // 3
+        top.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+
+    def _check_firewall(self) -> None:
+        """没放行就提醒一句 —— 这是手机连不上最常见的原因。"""
+        try:
+            if winapi.firewall_rule_exists():
+                return
+        except Exception:
+            return
+        self.log("[手机] 防火墙还没放行，手机连不上就点“二维码”→“放行防火墙”")
+
+    def _open_firewall(self) -> None:
+        port = self.remote.port or 8765
+        if winapi.firewall_rule_exists():
+            self.log("[手机] 防火墙规则已存在，不用重复添加")
+            return
+        if winapi.add_firewall_rule(port):
+            self.log(f"[手机] 已弹出 UAC，点“是”即可放行 {port} 端口")
+        else:
+            self.log("[手机] 放行失败，可以手动用管理员 PowerShell 跑：")
+            self.log(f'       netsh advfirewall firewall add rule name="ValoTalk Remote" '
+                     f'dir=in action=allow protocol=TCP localport={port}')
 
     # ============================================================ 启停
     def _autostart(self) -> None:
@@ -863,6 +1057,7 @@ class App:
         try:
             self.stop()
             self.hotkeys.stop()
+            self.remote.stop()
             self._set("overlay.x", self.overlay.x, save=False)
             self._set("overlay.y", self.overlay.y, save=True)
         except Exception:
@@ -1084,6 +1279,34 @@ class App:
                                    "失败：" + (self.tts.last_error or "未知")))
 
         threading.Thread(target=run, daemon=True).start()
+
+    # ============================================================ 权限
+    def _check_permission(self) -> None:
+        """游戏是 High 完整性级别，我们是 Medium 时模拟按键会被 UIPI 丢掉。
+
+        SendInput 照样返回成功，所以不说出来的话完全看不出问题。
+        只能在主线程调用（要动控件）。
+        """
+        if not winapi.keyinject_blocked():
+            self.perm_lbl.pack_forget()
+            self.perm_row.pack_forget()
+            self.perm_card.refresh()
+            return
+        self.perm_lbl.configure(
+            text="⚠ 未以管理员运行：模拟的 V 会被系统丢弃，队友听不到英文")
+        self.perm_lbl.pack(fill="x", pady=(8, 0))
+        self.perm_row.pack(fill="x", pady=(6, 0))
+        self.perm_card.refresh()
+        self.log("⚠ 权限不足：游戏跑在 High 完整性级别，本程序是 Medium。")
+        self.log("   Windows 会静默丢弃跨级别的模拟按键 —— 英文送不进游戏。")
+        self.log("   点「以管理员重启」，或右键 run.bat → 以管理员身份运行。")
+
+    def _relaunch_admin(self) -> None:
+        self.log("正在以管理员身份重启 …")
+        if winapi.relaunch_as_admin():
+            self.shutdown()
+        else:
+            self.log("提权被取消。可以手动：右键 run.bat → 以管理员身份运行")
 
     def _overlay(self, tag: str, text: str, original: str = "") -> None:
         self._ui_call(self.overlay, "add", tag, text, original)

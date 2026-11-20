@@ -183,6 +183,8 @@ class SileroSegmenter:
         self.sr = sr
         self.buf = np.zeros(0, dtype=np.float32)
         self.since_check = 0
+        # feed 在采集线程，flush 在热键/手机线程 —— 不加锁会抢 buf
+        self._lock = threading.Lock()
         self.check_every = max(1, int(0.30 * sr))
         self.min_speech_s = float(cfg.get("silero_min_speech_ms", 300)) / 1000.0
         self.end_gap_s = float(cfg.get("silero_end_gap_ms", 380)) / 1000.0
@@ -205,24 +207,27 @@ class SileroSegmenter:
             self.error = str(exc)
 
     def reset(self) -> None:
-        self.buf = np.zeros(0, dtype=np.float32)
-        self.since_check = 0
+        with self._lock:
+            self.buf = np.zeros(0, dtype=np.float32)
+            self.since_check = 0
 
     def flush(self) -> np.ndarray | None:
         """接口与能量 VAD 保持一致：返回单个音频段或 None。"""
-        out = self._extract(self.buf, force=True)
+        with self._lock:
+            out = self._extract(self.buf, force=True)
         return out[0] if out else None
 
     def feed(self, pcm: np.ndarray) -> list[np.ndarray]:
         pcm = np.asarray(pcm, dtype=np.float32).reshape(-1)
         if pcm.size == 0:
             return []
-        self.buf = np.concatenate([self.buf, pcm])
-        self.since_check += pcm.size
-        if self.since_check < self.check_every:
-            return []
-        self.since_check = 0
-        return self._extract(self.buf)
+        with self._lock:
+            self.buf = np.concatenate([self.buf, pcm])
+            self.since_check += pcm.size
+            if self.since_check < self.check_every:
+                return []
+            self.since_check = 0
+            return self._extract(self.buf)
 
     def _spans(self, audio: np.ndarray):
         if not self.ok or audio.size < int(0.5 * self.sr):
@@ -281,45 +286,50 @@ class Segmenter:
         self._cur_frames = 0
         self._silent = 0
         self._in_speech = False
+        # feed 在采集线程，flush 在热键/手机线程 —— 不加锁会抢内部缓冲
+        self._lock = threading.Lock()
 
     @property
     def threshold(self) -> float:
         return max(self.start_rms, self.noise_floor * self.start_ratio)
 
     def reset(self) -> None:
-        self._tail = np.zeros(0, dtype=np.float32)
-        self._preroll.clear()
-        self._cur.clear()
-        self._cur_frames = 0
-        self._silent = 0
-        self._in_speech = False
+        with self._lock:
+            self._tail = np.zeros(0, dtype=np.float32)
+            self._preroll.clear()
+            self._cur.clear()
+            self._cur_frames = 0
+            self._silent = 0
+            self._in_speech = False
 
     def feed(self, pcm: np.ndarray) -> list[np.ndarray]:
         """喂入 16k float32 连续音频，返回已完成的语音段列表。"""
         pcm = np.asarray(pcm, dtype=np.float32).reshape(-1)
         if pcm.size == 0:
             return []
-        if self._tail.size:
-            pcm = np.concatenate([self._tail, pcm])
-        out: list[np.ndarray] = []
-        n_full = pcm.size // self.frame_len
-        for i in range(n_full):
-            frame = pcm[i * self.frame_len : (i + 1) * self.frame_len]
-            done = self._frame(frame)
-            if done is not None:
-                out.append(done)
-        rest = pcm[n_full * self.frame_len :]
-        self._tail = rest.copy()
-        return out
+        with self._lock:
+            if self._tail.size:
+                pcm = np.concatenate([self._tail, pcm])
+            out: list[np.ndarray] = []
+            n_full = pcm.size // self.frame_len
+            for i in range(n_full):
+                frame = pcm[i * self.frame_len : (i + 1) * self.frame_len]
+                done = self._frame(frame)
+                if done is not None:
+                    out.append(done)
+            rest = pcm[n_full * self.frame_len :]
+            self._tail = rest.copy()
+            return out
 
     def flush(self) -> np.ndarray | None:
         """说话未收尾时强制吐出（用于热键松开）。"""
-        if self._in_speech and self._cur_frames >= self.min_frames:
-            seg = np.concatenate(self._cur) if self._cur else None
+        with self._lock:
+            if self._in_speech and self._cur_frames >= self.min_frames:
+                seg = np.concatenate(self._cur) if self._cur else None
+                self._reset_current()
+                return seg
             self._reset_current()
-            return seg
-        self._reset_current()
-        return None
+            return None
 
     def _reset_current(self) -> None:
         self._cur.clear()

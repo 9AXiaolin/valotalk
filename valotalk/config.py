@@ -53,6 +53,7 @@ DEFAULTS: dict = {
             "api_key": "",
             "model": "",               # 例 deepseek-chat
             "timeout": 12,
+            "prompt_cache": True,      # system prompt 标记缓存，省输入 token
         },
         "glossary": True,
         "cache_size": 4000,
@@ -82,6 +83,13 @@ DEFAULTS: dict = {
         "toggle_click_through": "f3",
         "clear_overlay": "f4",
         "toggle_mute_outgoing": "f5",
+    },
+    "remote": {
+        "enabled": True,               # 手机遥控（局域网 HTTP）：游戏独占键鼠时的唯一出路
+        "port": 8765,
+        "token": "",                   # 访问口令，二维码/复制都带着它
+        "auto_token": True,            # token 为空时自动生成（公用 WiFi 下强烈建议）
+        "start_with_app": True,        # 程序启动时自动开
     },
     "overlay": {
         "font_family": "Microsoft YaHei UI",

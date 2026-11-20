@@ -101,6 +101,24 @@ class RoundCard(tk.Canvas):
                         height=max(1, h - self.pad * 2))
         self._photo = photo                     # 保住引用，别被 GC
 
+    def refresh(self) -> None:
+        """往 .body 里动态增删控件之后必须调一次。
+
+        卡片里的 body 高度是画布窗口项**强制**的，新加的控件没有空间就
+        不会 map（也不触发 body 的 <Configure>），表现为「加了控件但看不见」。
+        这里先放开强制高度，让 body 按自己的需求尺寸重新算，再同步画布。
+        """
+        try:
+            self.itemconfig(self._win, height=0)
+            self.update_idletasks()
+            need = self.body.winfo_reqheight() + self.pad * 2
+            if abs(need - int(self["height"])) > 0:
+                self.configure(height=need)
+            self.update_idletasks()
+            self._redraw()
+        except Exception:
+            pass
+
 
 class RoundButton(tk.Canvas):
     """圆角按钮，带 hover / 按下反馈。"""

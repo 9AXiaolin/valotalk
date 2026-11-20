@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import ctypes
+import os
 import threading
 import time
 from collections import deque
@@ -169,6 +170,212 @@ WM_XBUTTONDOWN = 0x020B
 WM_XBUTTONUP = 0x020C
 WM_QUIT = 0x0012
 
+# ---------------- Raw Input（比钩子可靠，后台也能收） ----------------
+WM_INPUT = 0x00FF
+RIDEV_INPUTSINK = 0x00000100      # 关键：窗口在后台也能收到输入
+RIDEV_DEVNOTIFY = 0x00002000
+RIM_TYPEKEYBOARD = 1
+RID_INPUT = 0x10000003
+RI_KEY_BREAK = 0x01
+
+
+class RAWINPUTDEVICE(ctypes.Structure):
+    _fields_ = [
+        ("usUsagePage", wintypes.USHORT),
+        ("usUsage", wintypes.USHORT),
+        ("dwFlags", wintypes.DWORD),
+        ("hwndTarget", wintypes.HWND),
+    ]
+
+
+class RAWINPUTHEADER(ctypes.Structure):
+    _fields_ = [
+        ("dwType", wintypes.DWORD),
+        ("dwSize", wintypes.DWORD),
+        ("hDevice", wintypes.HANDLE),
+        ("wParam", wintypes.WPARAM),
+    ]
+
+
+class RAWKEYBOARD(ctypes.Structure):
+    _fields_ = [
+        ("MakeCode", wintypes.USHORT),
+        ("Flags", wintypes.USHORT),
+        ("Reserved", wintypes.USHORT),
+        ("VKey", wintypes.USHORT),
+        ("Message", wintypes.UINT),
+        ("ExtraInformation", wintypes.ULONG),
+    ]
+
+
+class RAWINPUT(ctypes.Structure):
+    _fields_ = [("header", RAWINPUTHEADER), ("keyboard", RAWKEYBOARD)]
+
+
+# 声明签名：不声明的话 64 位 LPARAM/HWND 会被当 32 位 int，溢出报错
+try:
+    user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT,
+                                      wintypes.WPARAM, wintypes.LPARAM]
+    user32.DefWindowProcW.restype = ctypes.c_ssize_t
+    user32.CreateWindowExW.argtypes = [
+        wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+        ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID]
+    user32.CreateWindowExW.restype = wintypes.HWND
+    user32.RegisterClassExW.argtypes = [ctypes.c_void_p]
+    user32.RegisterClassExW.restype = wintypes.ATOM
+    user32.GetRawInputData.argtypes = [wintypes.HANDLE, wintypes.UINT,
+                                       wintypes.LPVOID,
+                                       ctypes.POINTER(wintypes.UINT),
+                                       wintypes.UINT]
+    user32.GetRawInputData.restype = wintypes.UINT
+    user32.RegisterRawInputDevices.argtypes = [ctypes.c_void_p, wintypes.UINT,
+                                               wintypes.UINT]
+    user32.RegisterRawInputDevices.restype = wintypes.BOOL
+except Exception:
+    pass
+
+
+_WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT,
+                              wintypes.WPARAM, wintypes.LPARAM)
+
+
+class _WNDCLASSEXW(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.UINT),
+        ("style", wintypes.UINT),
+        ("lpfnWndProc", _WNDPROC),
+        ("cbClsExtra", ctypes.c_int),
+        ("cbWndExtra", ctypes.c_int),
+        ("hInstance", wintypes.HINSTANCE),
+        ("hIcon", wintypes.HICON),
+        ("hCursor", wintypes.HANDLE),
+        ("hbrBackground", wintypes.HBRUSH),
+        ("lpszMenuName", wintypes.LPCWSTR),
+        ("lpszClassName", wintypes.LPCWSTR),
+        ("hIconSm", wintypes.HICON),
+    ]
+
+
+class RawKeyboardInput:
+    """用 Raw Input + RIDEV_INPUTSINK 读键盘。
+
+    和低级钩子不同：窗口**不需要前台**，游戏独占焦点时系统仍会把
+    键盘原始事件投递到我们注册的窗口。Vanguard 拦钩子但拦不住这个
+    （拦了系统就没法给其它程序派发输入了）。
+    """
+
+    CLASS_NAME = "ValoTalkRawInput"
+
+    def __init__(self):
+        self._hwnd = 0
+        self._thread: threading.Thread | None = None
+        self._tid = 0
+        self._queue: deque = deque(maxlen=512)
+        self._proc = None
+        self.error: str | None = None
+        self.keys: set[int] = set()          # 当前按下的 VK
+        self.dropped = 0
+
+    def drain(self) -> list[tuple[int, bool]]:
+        out: list[tuple[int, bool]] = []
+        while True:
+            try:
+                out.append(self._queue.popleft())
+            except IndexError:
+                break
+        return out
+
+    def start(self) -> bool:
+        if self._thread and self._thread.is_alive():
+            return bool(self._hwnd)
+        self._thread = threading.Thread(target=self._run, name="raw-input",
+                                        daemon=True)
+        self._thread.start()
+        time.sleep(0.15)
+        return bool(self._hwnd)
+
+    def stop(self) -> None:
+        if self._hwnd:
+            try:
+                user32.PostMessageW(self._hwnd, WM_QUIT, 0, 0)
+            except Exception:
+                pass
+            self._hwnd = 0
+        self._thread = None
+
+    def _run(self) -> None:
+        k32 = ctypes.WinDLL("kernel32")
+        self._tid = k32.GetCurrentThreadId()
+        hinst = k32.GetModuleHandleW(None)
+        self._proc = _WNDPROC(self._wndproc)
+
+        wc = _WNDCLASSEXW()
+        wc.cbSize = ctypes.sizeof(_WNDCLASSEXW)
+        wc.lpfnWndProc = self._proc
+        wc.hInstance = hinst
+        wc.lpszClassName = self.CLASS_NAME
+        user32.RegisterClassExW(ctypes.byref(wc))     # 已注册会返回 0，无妨
+
+        # 隐藏窗口，只用来收 WM_INPUT
+        self._hwnd = user32.CreateWindowExW(
+            0, self.CLASS_NAME, "ValoTalkRaw", 0,
+            0, 0, 0, 0, None, None, hinst, None)
+        if not self._hwnd:
+            self.error = f"CreateWindowEx 失败 err={ctypes.get_last_error()}"
+            return
+
+        dev = RAWINPUTDEVICE()
+        dev.usUsagePage = 0x01          # Generic Desktop
+        dev.usUsage = 0x06              # Keyboard
+        dev.dwFlags = RIDEV_INPUTSINK   # ← 后台也收
+        dev.hwndTarget = self._hwnd
+        ok = user32.RegisterRawInputDevices(ctypes.byref(dev), 1,
+                                            ctypes.sizeof(RAWINPUTDEVICE))
+        if not ok:
+            self.error = f"RegisterRawInputDevices 失败 err={ctypes.get_last_error()}"
+            return
+
+        msg = wintypes.MSG()
+        while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
+
+    def _wndproc(self, hwnd, msg, w_param, l_param):
+        if msg == WM_INPUT:
+            try:
+                self._on_input(l_param)
+            except Exception:
+                pass
+            # 处理完必须调 DefWindowProc，否则系统会一直重发
+        return user32.DefWindowProcW(hwnd, msg, w_param, l_param)
+
+    def _on_input(self, l_param) -> None:
+        size = wintypes.UINT(0)
+        user32.GetRawInputData(l_param, RID_INPUT, None, ctypes.byref(size),
+                               ctypes.sizeof(RAWINPUTHEADER))
+        if size.value == 0:
+            return
+        buf = ctypes.create_string_buffer(size.value)
+        got = user32.GetRawInputData(l_param, RID_INPUT, buf, ctypes.byref(size),
+                                     ctypes.sizeof(RAWINPUTHEADER))
+        if got == 0xFFFFFFFF:
+            return
+        raw = ctypes.cast(buf, ctypes.POINTER(RAWINPUT)).contents
+        if raw.header.dwType != RIM_TYPEKEYBOARD:
+            return
+        vk = int(raw.keyboard.VKey)
+        up = bool(raw.keyboard.Flags & RI_KEY_BREAK)
+        if vk in (0, 0xFF):
+            return                      # 假键，忽略
+        if len(self._queue) >= self._queue.maxlen:
+            self.dropped += 1
+        self._queue.append((vk, not up))
+        if up:
+            self.keys.discard(vk)
+        else:
+            self.keys.add(vk)
+
 
 class _MSLLHOOKSTRUCT(ctypes.Structure):
     _fields_ = [
@@ -287,7 +494,8 @@ class MouseHook:
 
 
 class HotkeyWatcher:
-    """键盘走 GetAsyncKeyState 轮询，鼠标侧键走低级钩子。"""
+    """键盘优先走 Raw Input（后台也能收），失败才退回 GetAsyncKeyState 轮询。
+    鼠标侧键走低级钩子。"""
 
     def __init__(self, poll_ms: int = 25):
         self.poll_ms = poll_ms
@@ -298,7 +506,11 @@ class HotkeyWatcher:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.mouse_hook = MouseHook()
+        self.raw = RawKeyboardInput()
+        self._raw_ok = False
         self._mouse_label_map: dict[int, str] = {}
+        # VK -> action 反查表
+        self._vk_action: dict[int, str] = {}
 
     def bind(self, action: str, key: str, on_press=None, on_release=None) -> None:
         if not key:
@@ -313,6 +525,7 @@ class HotkeyWatcher:
             self._mouse_labels[vk] = action
             return
         self._bindings[action] = vk
+        self._vk_action[vk] = action
         if on_press:
             self._on_press[action] = on_press
         if on_release:
@@ -332,6 +545,9 @@ class HotkeyWatcher:
             self._thread.start()
         if self.mouse_hook._handlers:
             self.mouse_hook.start()
+        # Raw Input：后台也能收到游戏里的按键，优先用它
+        if self._bindings:
+            self._raw_ok = self.raw.start()
 
     def stop(self) -> None:
         self._stop.set()
@@ -340,6 +556,10 @@ class HotkeyWatcher:
             t.join(timeout=1.0)
         self._thread = None
         self.mouse_hook.stop()
+        try:
+            self.raw.stop()
+        except Exception:
+            pass
 
     def reset(self) -> None:
         """清空所有绑定，用于界面上改键后重建。"""
@@ -349,11 +569,39 @@ class HotkeyWatcher:
         self._on_release.clear()
         self._state.clear()
         self._mouse_labels.clear()
+        self._vk_action.clear()
         self.mouse_hook = MouseHook()
+        self.raw = RawKeyboardInput()
+        self._raw_ok = False
 
     def _loop(self) -> None:
         while not self._stop.is_set():
+            raw_handled: set[str] = set()
+
+            # ① Raw Input 事件（游戏全屏也能收到）
+            if self._raw_ok:
+                for vk, down in self.raw.drain():
+                    action = self._vk_action.get(vk)
+                    if not action:
+                        continue
+                    was = self._state.get(action, False)
+                    if down and not was:
+                        self._state[action] = True
+                        raw_handled.add(action)
+                        cb = self._on_press.get(action)
+                        if cb:
+                            threading.Thread(target=_safe, args=(cb,), daemon=True).start()
+                    elif not down and was:
+                        self._state[action] = False
+                        raw_handled.add(action)
+                        cb = self._on_release.get(action)
+                        if cb:
+                            threading.Thread(target=_safe, args=(cb,), daemon=True).start()
+
+            # ② 轮询兜底（Raw Input 不可用时；或它漏掉的键）
             for action, vk in list(self._bindings.items()):
+                if action in raw_handled:
+                    continue
                 down = bool(user32.GetAsyncKeyState(vk) & 0x8000)
                 was = self._state.get(action, False)
                 if down and not was:
@@ -366,7 +614,8 @@ class HotkeyWatcher:
                     cb = self._on_release.get(action)
                     if cb:
                         threading.Thread(target=_safe, args=(cb,), daemon=True).start()
-            # 消费鼠标钩子塞进来的事件（绝不能在钩子回调里做这件事）
+
+            # ③ 消费鼠标钩子塞进来的事件（绝不能在钩子回调里做这件事）
             try:
                 _dispatch_mouse_events(self)
             except Exception:
@@ -484,5 +733,201 @@ def set_low_priority() -> bool:
         k32 = ctypes.WinDLL("kernel32")
         h = k32.GetCurrentProcess()
         return bool(k32.SetPriorityClass(h, BELOW_NORMAL_PRIORITY_CLASS))
+    except Exception:
+        return False
+
+
+# ---------------- 权限：模拟按键能不能送进游戏 ----------------
+# 无畏契约跑在 High 完整性级别，普通进程是 Medium。
+# Windows 的 UIPI 会把 Medium → High 的 SendInput **静默丢弃**，
+# 而 SendInput 照样返回 1 —— 也就是说「按了但没生效」在程序里看不出来。
+# 唯一解：把自己的完整性级别也提到 High，即「以管理员身份运行」。
+SECURITY_MANDATORY_MEDIUM_RID = 0x2000
+SECURITY_MANDATORY_HIGH_RID = 0x3000
+
+GAME_EXES = ("valorant.exe", "valorant-win64-shipping.exe")
+
+
+def is_elevated() -> bool:
+    """当前进程是否以管理员（High 完整性）运行。"""
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def _integrity_rid(h_process) -> int | None:
+    try:
+        advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        advapi32.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD,
+                                             ctypes.POINTER(wintypes.HANDLE)]
+        advapi32.OpenProcessToken.restype = wintypes.BOOL
+        advapi32.GetTokenInformation.argtypes = [
+            wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+            wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+        advapi32.GetTokenInformation.restype = wintypes.BOOL
+        advapi32.GetSidSubAuthorityCount.argtypes = [ctypes.c_void_p]
+        advapi32.GetSidSubAuthorityCount.restype = ctypes.POINTER(ctypes.c_ubyte)
+        advapi32.GetSidSubAuthority.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+        advapi32.GetSidSubAuthority.restype = ctypes.POINTER(wintypes.DWORD)
+
+        class _SIA(ctypes.Structure):
+            _fields_ = [("Sid", ctypes.c_void_p), ("Attributes", wintypes.DWORD)]
+
+        class _TML(ctypes.Structure):
+            _fields_ = [("Label", _SIA)]
+
+        TOKEN_QUERY = 0x0008
+        TokenIntegrityLevel = 25
+        tok = wintypes.HANDLE()
+        if not advapi32.OpenProcessToken(h_process, TOKEN_QUERY, ctypes.byref(tok)):
+            return None
+        try:
+            size = wintypes.DWORD(0)
+            advapi32.GetTokenInformation(tok, TokenIntegrityLevel, None, 0,
+                                         ctypes.byref(size))
+            buf = ctypes.create_string_buffer(max(size.value, 64))
+            if not advapi32.GetTokenInformation(tok, TokenIntegrityLevel, buf,
+                                                size, ctypes.byref(size)):
+                return None
+            tml = ctypes.cast(buf, ctypes.POINTER(_TML)).contents
+            if not tml.Label.Sid:
+                return None
+            cnt = advapi32.GetSidSubAuthorityCount(tml.Label.Sid)[0]
+            return int(advapi32.GetSidSubAuthority(tml.Label.Sid, cnt - 1)[0])
+        finally:
+            kernel32.CloseHandle(tok)
+    except Exception:
+        return None
+
+
+def own_integrity_rid() -> int | None:
+    try:
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.GetCurrentProcess.restype = wintypes.HANDLE
+        return _integrity_rid(k32.GetCurrentProcess())
+    except Exception:
+        return None
+
+
+def game_integrity_rid() -> int | None:
+    """正在跑的无畏契约进程的完整性级别；没开或查不到返回 None。"""
+    try:
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        k32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+        k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+
+        class _PE(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_void_p),
+                ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG), ("dwFlags", wintypes.DWORD),
+                ("szExeFile", wintypes.WCHAR * 260),
+            ]
+
+        snap = k32.CreateToolhelp32Snapshot(0x00000002, 0)
+        if not snap or snap == ctypes.c_void_p(-1).value:
+            return None
+        try:
+            pe = _PE()
+            pe.dwSize = ctypes.sizeof(_PE)
+            ok = k32.Process32FirstW(snap, ctypes.byref(pe))
+            while ok:
+                if pe.szExeFile.lower() in GAME_EXES:
+                    h = k32.OpenProcess(0x1000, False, pe.th32ProcessID)
+                    if h:
+                        try:
+                            rid = _integrity_rid(h)
+                            if rid is not None:
+                                return rid
+                        finally:
+                            k32.CloseHandle(h)
+                ok = k32.Process32NextW(snap, ctypes.byref(pe))
+        finally:
+            k32.CloseHandle(snap)
+    except Exception:
+        return None
+    return None
+
+
+def keyinject_blocked() -> bool:
+    """True = 我们比游戏低一级，模拟按键会被 UIPI 丢掉。
+
+    查不到游戏进程（没开）时返回 False，不打扰用户。
+    """
+    game = game_integrity_rid()
+    if game is None:
+        return False
+    own = own_integrity_rid()
+    if own is None:
+        own = SECURITY_MANDATORY_HIGH_RID if is_elevated() \
+            else SECURITY_MANDATORY_MEDIUM_RID
+    return own < game
+
+
+def relaunch_as_admin() -> bool:
+    """以管理员身份重新拉起自己。返回是否成功发起。"""
+    try:
+        import sys
+        import subprocess
+        exe = sys.executable
+        work_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        r = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", exe,
+            f'-X utf8 -m valotalk', work_dir, 1)
+        return int(r) > 32
+    except Exception:
+        return False
+
+
+# ---------------- 防火墙：手机遥控必须放行 ----------------
+FIREWALL_RULE = "ValoTalk Remote"
+
+
+def firewall_rule_exists(name: str = FIREWALL_RULE) -> bool:
+    """规则存在就返回 True。不用管理员权限，查不到也当 False。"""
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["netsh", "advfirewall", "firewall", "show", "rule", f"name={name}"],
+            capture_output=True, timeout=6,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        text = (out.stdout or b"").decode("gbk", "ignore") + \
+               (out.stderr or b"").decode("gbk", "ignore")
+        return "No rules match" not in text and "没有与指定标准相匹配的规则" not in text \
+            and name in text
+    except Exception:
+        return False
+
+
+def add_firewall_rule(port: int, name: str = FIREWALL_RULE) -> bool:
+    """弹 UAC 提权加一条入站放行规则。返回是否已发起（不代表用户点了同意）。
+
+    profile 用 any 而不是 private：WiFi 被 Windows 判成「公用网络」时
+    private 规则不生效，手机就连不上，还看不出原因。
+    真正的访问控制是服务端的局域网来源校验，不是防火墙 profile。
+    """
+    try:
+        inner = (
+            f'netsh advfirewall firewall delete rule name="{name}" >nul 2>&1 & '
+            f'netsh advfirewall firewall add rule name="{name}" dir=in action=allow '
+            f'protocol=TCP localport={port} profile=any enable=yes'
+        )
+        r = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", "cmd.exe", f'/c {inner}', None, 0
+        )
+        # ShellExecuteW 返回值 >32 表示成功把命令交出去了
+        return int(r) > 32
     except Exception:
         return False

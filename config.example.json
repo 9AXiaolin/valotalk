@@ -50,7 +50,12 @@
   },
   "ocr": {
     "engine": "auto",
-    "region": [0, 0, 0, 0],
+    "region": [
+      0,
+      0,
+      0,
+      0
+    ],
     "interval_ms": 1200,
     "min_confidence": 0.5,
     "max_lines": 10,
@@ -91,5 +96,11 @@
   },
   "ui": {
     "panel_on_top": true
+  },
+  "remote": {
+    "enabled": true,
+    "port": 8765,
+    "token": "",
+    "auto_token": true
   }
 }

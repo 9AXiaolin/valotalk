@@ -5,10 +5,16 @@
 | 链路 | 方向 | 结果 |
 |---|---|---|
 | **① 队友语音** | 游戏声音 → 语音识别 → 翻译 | **中文字幕出现在屏幕下方** |
-| **② 我说话** | 按住 F2 说中文 → 翻译成英文 → TTS 念出来 | 声音通过 VB-Audio Cable 送进游戏麦克风，**队友能听见英文** |
+| **② 我说话** | 手机点一下说中文 → 翻译成英文 → TTS 念出来 | 声音通过 VB-Audio Cable 送进游戏麦克风，**队友能听见英文** |
 | **③ 左下角聊天** | 截屏 → OCR → 翻译 | 同一块字幕里显示中文 |
 
 识别用本地 faster-whisper（不传云端），翻译走 Bing / Google / 你的 LLM，全离线也能跑（SAPI 兜底 TTS）。
+
+> 🔴 **必须用管理员身份运行。** 无畏契约跑在 High 完整性级别，普通进程是 Medium，
+> Windows 的 UIPI 会把 Medium → High 的模拟按键**静默丢弃**（`SendInput` 还照样返回成功），
+> 结果是程序“按了 V”但游戏永远收不到，队友听不到英文。
+> `run.bat` 已经会自动提权；用 `python -m valotalk` 手动启动时要自己开管理员终端。
+> 原因和实测见 [§3.7](#37-为什么必须用管理员运行)。
 
 ---
 
@@ -22,7 +28,7 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1
 
 脚本会：装依赖（阿里云镜像）→ 预下载 whisper 模型（hf-mirror）→ 跑环境自检。
 
-启动：**双击 `run.bat`**。
+启动：**双击 `run.bat`**（会弹一次 UAC，点「是」—— 原因见 §3.7）。
 
 ---
 
@@ -101,6 +107,124 @@ MOUSE4、MOUSE5      ← 鼠标侧键（后退 / 前进）
 > 用鼠标侧键当触发键前，先看一眼游戏里这两个键有没有绑技能，避免按一下同时触发两件事。
 
 字幕默认贴在**屏幕下方居中**，点面板上的「字幕贴回屏幕下方」可复位；关掉穿透后可以直接拖动它。
+
+### 游戏里热键不生效？用手机遥控
+
+**结论先说：无畏契约里，任何程序的热键都不可能在游戏有焦点时收到。**
+
+这不是本项目的 bug，是游戏的输入独占设计。三条路都试过：
+
+| 方式 | 游戏有焦点时能否收到 | 说明 |
+|---|---|---|
+| `GetAsyncKeyState` 轮询 | ❌ 收不到 | 只在程序前台时有效 |
+| `WH_KEYBOARD_LL` 低层钩子 | ❌ 被 Vanguard 拦 | 装了 Vanguard 就挂不上 |
+| Raw Input `RIDEV_INPUTSINK` | ❌ 被游戏抢走 | 微软给后台程序的接口，但游戏优先 |
+
+而窗口化无边框也没用 —— 问题不在显示模式，在输入通道。
+
+**所以做了手机遥控**：手机走 WiFi，物理上绕开键鼠通道，怎么都拦不住。
+
+#### 怎么用
+
+1. 打开程序，中列「快捷键」卡片最下面有一行 **手机**，直接显示地址：
+   ```
+   [手机] 192.168.1.7:8765/
+   ```
+2. 点右边 **二维码**，手机（同一个 WiFi）扫一下就打开；也可以手动输入这个地址。
+3. 手机上是一个大圆按钮，两种模式（按钮下方切换，会记住选择）：
+
+   | 模式 | 操作 | 适合 |
+   |---|---|---|
+   | **按住** | 按住说，松手翻译 | 短促报点 |
+   | **点按** | 点一下开始，再点一下结束 | **打起来两只手都要用鼠标键盘，推荐这个** |
+
+4. 建议把网页「添加到主屏幕」，之后像开 App 一样点开，全屏没有地址栏。
+
+按钮激活时会震动、变绿、并显示已按住的秒数。**按住模式超过 25 秒会提示松手**（识别有上限），点按模式不催你。
+
+#### 手机连不上？
+
+按顺序排：
+
+| 现象 | 原因 | 办法 |
+|---|---|---|
+| 手机一直转圈 | **Windows 防火墙挡了** | 弹窗里点 **放行防火墙**（会弹 UAC，点「是」） |
+| 提示「电脑那边没有响应」 | 地址不对 | 点二维码，弹窗底下会列出其他网卡地址，换一个试 |
+| 连上了但按钮没反应 | 程序没点 ▶ 开始 | 手机页顶部圆点是灰的/红的就说明电脑那边没跑起来 |
+| 手机锁屏后再按没反应 | 浏览器被系统挂起 | 页面试了 Wake Lock 防锁屏，仍是黑屏就关掉省电模式 |
+
+手动放行（不想点按钮时，管理员 PowerShell）：
+
+```powershell
+netsh advfirewall firewall add rule name="ValoTalk Remote" dir=in action=allow protocol=TCP localport=8765 profile=any
+```
+
+> 规则用的是 `profile=any`。很多人 WiFi 被 Windows 判成「公用网络」，只放行 private 的话规则不生效、手机连不上还看不出原因。真正的访问控制是服务端的局域网来源校验。
+
+#### 安全边界
+
+- 只监听局域网：非 `127/10/172.16-31/192.168` 来源一律 403
+- **默认自动生成口令**：第一次启动随机生成一串写进 `config.json` 的 `remote.token`，网址变成 `http://IP:8765/?t=口令`。二维码和「复制网址」都带着口令，扫一下就进去了，不用手打
+- 为什么默认要口令：宿舍 / 校园 / 咖啡厅的 WiFi 在 Windows 眼里是**公用网络**，同一网段里谁都能扫到这个端口
+- 想彻底不要口令（只在自己家、完全信任同网设备时）：
+  ```jsonc
+  "remote": { "enabled": true, "port": 8765, "token": "", "auto_token": false }
+  ```
+- 想换口令：改 `remote.token` 重启，旧二维码立刻失效
+- 不想要了：`"remote": { "enabled": false }`，或者关掉防火墙规则
+
+#### 掉线兜底
+
+按住期间每 400ms 发一次心跳。**1.8 秒收不到心跳就自动松手**（并在日志里写一行），所以手机锁屏、切后台、WiFi 抖动都不会把「正在听」卡住不放。手机页面切到后台（`visibilitychange`）也会立刻结束本次说话。
+
+### 3.7 为什么必须用管理员运行
+
+这条踩了很久，写清楚免得再绕。
+
+**现象**：程序应该替你按住 V 播英文，但游戏里麦克风图标从来不亮，队友听不到。
+
+**实测数据**（`tools/keyinject_probe.py`）：
+
+| 项目 | 值 |
+|---|---|
+| 本程序完整性级别 | `Medium (0x2000)` |
+| `VALORANT-Win64-Shipping.exe` | `High (0x3000)` |
+| `SendInput` 返回值 | **1（成功）** |
+| 注入后能否读到 V | **否** |
+
+`SendInput` 返回 1 是真的 —— 它成功把事件塞进了系统输入队列。但 UIPI
+（用户界面特权隔离）在**投递阶段**发现目标窗口比调用方级别高，直接丢弃。
+这个丢弃没有任何错误码，所以程序里看起来一切正常。
+
+这是微软的既定设计：低完整性进程不能向高完整性窗口发输入。
+
+**提权后**（`tools/keyinject_elevated_probe.py` 实测）：
+
+```
+管理员权限     : 是
+本进程完整性   : 0x3000
+游戏完整性     : 0x3000
+注入会被拦吗   : 否
+注入时前台 pid : 29900（VALORANT-Win64-Shipping.exe）
+注入后读到 V   : 是          ← 进得去
+```
+
+**所以**：
+
+- `run.bat` 会自动用 UAC 提权重启自己，你不用手动右键
+- 用 `python -m valotalk` 启动的话，要在**管理员 PowerShell** 里跑
+- 程序启动时也会自检：级别不够就在「设备」卡片里显示红字 + 一个「以管理员重启」按钮
+- 想绕过提权（调试用）：`set VALOTALK_NO_ADMIN=1` 再跑 `run.bat`
+
+**如果提权后还是不亮**，说明 Vanguard 也拦模拟输入。那就别跟它斗，改用开放式麦克风：
+
+游戏 → 设置 → 音频 → 语音聊天模式 → **开放式麦克风**，然后
+
+```jsonc
+"tts": { "game_ptt_enabled": false }    // 不再模拟按键
+```
+
+麦克风常开，程序往 Cable 里播，游戏自动收走。效果一样，还少 0.5 秒延迟。
 
 ### 为什么说中文用 F2，不用游戏的 V
 
@@ -278,6 +402,30 @@ Bing:  敌人一次击杀在A点，小心侧翼。（one tap=一枪头，flank=�
 ```
 
 机翻需要用术语表注释来救场，LLM 本身就译对了。
+
+#### prompt caching（省输入 token）
+
+`system` prompt 里有整套术语表（约 560 tokens），每句翻译都要重传。把它标记成可缓存后，服务端会复用，命中的部分按低价计费。
+
+配置里已经默认开启：
+
+```jsonc
+"translate.llm": { "prompt_cache": true }
+```
+
+实测对比（`qwen-plus`，prompt 565 tokens）：
+
+| 设置 | 命中缓存 | 命中率 |
+|---|---|---|
+| 关闭 | 384 tokens | 68% |
+| **开启** | **448 tokens** | **79%** |
+
+> 通义千问**本身就会自动缓存**（不标记也命中 384），标记后多命中 64 tokens。
+> 延迟没受影响（499~619ms）。
+>
+> 如果哪个兼容接口不认 `content` 数组格式，代码会自动退回纯字符串重试一次，不会因为加了这个参数把翻译搞挂。
+
+按 1000 句算，省下约 0.06 元——**基本可以忽略**，属于顺手优化。
 
 ### 4.3 隐私去向
 
@@ -482,6 +630,7 @@ VAD 收尾 0.4s  +  识别 0.25s  +  翻译 0.7s  ≈ 1.4s
   "translate": { "backend": "auto", "proxy": "", "llm": { "base_url": "", "model": "", "api_key": "" } },
   "ocr":     { "region": [x1,y1,x2,y2], "interval_ms": 600, "min_confidence": 0.5 },
   "tts":     { "voice": "en-US-GuyNeural", "rate": "+10%", "game_ptt_enabled": true, "game_ptt_key": "v" },
+  "remote":  { "enabled": true, "port": 8765, "token": "" },
   "overlay": { "font_size": 19, "backdrop": false, "outline": true,
                "ttl_seconds": 30, "click_through": true, "show_original": true }
 }
@@ -510,8 +659,9 @@ python -X utf8 tools\probe_env.py
 |---|---|
 | 队友说话没字幕 | 面板里「游戏输出」选错；或游戏语音输出走了 CABLE。先看日志有没有 `采集队友语音`，再看有没有 `队友：... → ...` |
 | 字幕不出现但日志有内容 | 游戏是独占全屏；或字幕窗跑到屏幕外——点「字幕贴回屏幕下方」 |
-| 说中文没反应 | 麦克风选错；F2 被游戏占用（改 `hotkeys.ptt`）；模型还在加载（看日志「模型」行） |
-| 队友听不到英文 | TTS 输出不是 `CABLE Input`；游戏麦克风没指向 `CABLE Output`；PTT 键位和 `tts.game_ptt_key` 不一致 |
+| 说中文没反应 | 用**手机遥控**（游戏里键盘热键进不去，见 §3）；或麦克风选错；模型还在加载（看日志「模型」行） |
+| 手机打不开网页 | 防火墙没放行 → 点「二维码」→「放行防火墙」；或手机不在同一个 WiFi |
+| 队友听不到英文 | **先确认是不是管理员运行**（§3.7，最常见原因）；再查 TTS 输出是不是 `CABLE Input`；游戏麦克风是不是指向 `CABLE Output`；`tts.game_ptt_key` 和游戏里的语音键是否一致 |
 | 英文念得断断续续 | 把 `audio.capture_samplerate` 改 44100 试试；或换 `tts.engine: "sapi"` 走离线 |
 | 翻译失败 | 日志里 `translate` 那行；Bing 偶尔限流，配 LLM 最稳 |
 | 识别全是乱七八糟 | 音乐音效太大；换 `small` 以上模型 |
@@ -531,6 +681,11 @@ $py = "python"
 & $py -X utf8 tools\capture_stability.py  # 采集稳定性（应 100%）
 & $py -X utf8 tools\uitest.py             # 字幕排版（存 cache/ui_shot.png）
 & $py -X utf8 tools\quality_test.py       # 音质对比：均值/左/右声道谁识别得准
+& $py -X utf8 tools\remote_test.py        # 手机遥控接口 + 掉线看门狗
+& $py -X utf8 tools\segmenter_race_test.py # 采集线程与手机线程并发 flush
+& $py -X utf8 tools\keyinject_probe.py    # 权限/完整性级别 + SendInput 是否被拦
+& $py -X utf8 tools\keyinject_elevated_probe.py  # 提权后注入能不能真的进去
+& E:\Node\node.exe tools\remote_page_logic.js  # 手机页面交互逻辑（按住/点按/心跳）
 ```
 
 `boot_test.py` 里 `采集源` 那行最有用：`running=True` + `peak` 会随声音跳动，说明麦克风和游戏音频都收进来了。
@@ -563,7 +718,9 @@ valotalk/
 │  ├─ tts.py              edge-tts / SAPI → VB-Cable
 │  ├─ ocr.py              截图 OCR + 新增行 diff
 │  ├─ overlay.py          屏幕下方悬浮字幕
-│  └─ winapi.py           全局热键轮询、按键注入、点击穿透
+│  ├─ remote.py           手机遥控（局域网 HTTP，绕开游戏输入独占）
+│  ├─ ui_theme.py         iOS 风格圆角控件
+│  └─ winapi.py           全局热键轮询、按键注入、点击穿透、防火墙
 └─ tools/
    ├─ probe_env.py        环境自检
    └─ selftest.py         离线冒烟测试

@@ -42,6 +42,7 @@ class TTS:
         self._lock = threading.Lock()
         self._hold = VirtualKeyHold()
         self.last_error = ""
+        self._inject_warned = False
         self._tmp = TMP_DIR
         self._tmp.mkdir(parents=True, exist_ok=True)
         self._cache_dir = CACHE_DIR / "tts_cache"
@@ -213,6 +214,20 @@ class TTS:
             pass
         return pcm
 
+    def _check_inject(self) -> None:
+        """第一次播放时提醒一次：跨完整性级别的模拟按键会被系统丢掉。"""
+        if self._inject_warned:
+            return
+        self._inject_warned = True
+        try:
+            from .winapi import keyinject_blocked
+            blocked = keyinject_blocked()
+        except Exception:
+            return
+        if blocked:
+            self._log("⚠ 未以管理员运行：模拟的 V 会被系统丢弃，队友听不到英文")
+            self._log("   右键 run.bat → 以管理员身份运行，或面板点「以管理员重启」")
+
     # ---------------- 播放（送进游戏） ----------------
     def _play_into_game(self, pcm: np.ndarray, sr: int) -> bool:
         device = self._get("audio.tts_output_device", "")
@@ -226,6 +241,7 @@ class TTS:
         try:
             if ptt_on and ptt_key:
                 self._hold.acquire(ptt_key)
+                self._check_inject()
                 time.sleep(0.12)  # 等游戏打开话筒
             ok = sink.play(pcm, sr)
             if not ok:

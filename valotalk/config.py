@@ -70,6 +70,7 @@ DEFAULTS: dict = {
         "engine": "edge",              # edge / sapi
         "voice": "en-US-GuyNeural",
         "rate": "+10%",
+        "pitch": "+0Hz",               # 音高：萝莉 +35Hz、御姐 -20Hz、气泡 -35Hz
         "volume": "+0%",
         "game_ptt_enabled": True,      # 播放前按住游戏内语音键
         "game_ptt_key": "v",

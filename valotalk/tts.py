@@ -53,6 +53,7 @@ class TTS:
             text,
             str(self._get("tts.voice", "en-US-GuyNeural")),
             str(self._get("tts.rate", "+10%")),
+            str(self._get("tts.pitch", "+0Hz")),
             str(self._get("tts.volume", "+0%")),
         ]).encode("utf-8")
         return self._cache_dir / (hashlib.md5(key).hexdigest() + ".npy")
@@ -128,10 +129,12 @@ class TTS:
         voice = self._get("tts.voice", "en-US-GuyNeural")
         rate = self._get("tts.rate", "+10%")
         volume = self._get("tts.volume", "+0%")
+        pitch = self._get("tts.pitch", "+0Hz")
         out = self._tmp / f"{uuid.uuid4().hex}.mp3"
 
         async def run():
-            comm = edge_tts.Communicate(text, voice, rate=rate, volume=volume)
+            comm = edge_tts.Communicate(text, voice, rate=rate, volume=volume,
+                                        pitch=pitch)
             await comm.save(str(out))
 
         try:

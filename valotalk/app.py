@@ -32,20 +32,85 @@ from .tts import TTS
 
 FONT = "Microsoft YaHei UI"
 
-# 常用英文音色（全部 47 个太多，这里挑自然度靠前的）
-VOICE_CHOICES = [
-    "en-US-AndrewNeural",
-    "en-US-GuyNeural",
-    "en-US-AriaNeural",
-    "en-US-JennyNeural",
-    "en-US-AvaMultilingualNeural",
-    "en-US-AndrewMultilingualNeural",
-    "en-GB-RyanNeural",
-    "en-GB-SoniaNeural",
-    "en-AU-WilliamMultilingualNeural",
-    "en-CA-LiamNeural",
-    "en-IN-PrabhatNeural",
+# ---------------- TTS 音色 ----------------
+_LOCALE_CN = {
+    "en-US": "美", "en-GB": "英", "en-AU": "澳", "en-CA": "加", "en-IE": "爱",
+    "en-IN": "印", "en-NZ": "新西", "en-ZA": "南非", "en-PH": "菲", "en-SG": "新加",
+    "en-HK": "港", "en-KE": "肯", "en-NG": "尼",
+}
+
+# (locale, ShortName, 性别, 性格)
+_VOICE_RAW = [
+    ("en-US", "AnaNeural", "女", "可爱"),
+    ("en-US", "AvaNeural", "女", "有表现力"),
+    ("en-US", "AvaMultilingualNeural", "女", "有表现力"),
+    ("en-US", "AriaNeural", "女", "自信"),
+    ("en-US", "EmmaNeural", "女", "开朗清晰"),
+    ("en-US", "EmmaMultilingualNeural", "女", "开朗清晰"),
+    ("en-US", "JennyNeural", "女", "亲切体贴"),
+    ("en-US", "MichelleNeural", "女", "温和"),
+    ("en-US", "AndrewNeural", "男", "温暖可信"),
+    ("en-US", "AndrewMultilingualNeural", "男", "温暖可信"),
+    ("en-US", "BrianNeural", "男", "随性真诚"),
+    ("en-US", "BrianMultilingualNeural", "男", "随性真诚"),
+    ("en-US", "ChristopherNeural", "男", "权威沉稳"),
+    ("en-US", "EricNeural", "男", "冷静理性"),
+    ("en-US", "GuyNeural", "男", "有激情"),
+    ("en-US", "RogerNeural", "男", "活泼"),
+    ("en-US", "SteffanNeural", "男", "冷静理性"),
+    ("en-GB", "LibbyNeural", "女", "亲和"),
+    ("en-GB", "MaisieNeural", "女", "亲和"),
+    ("en-GB", "SoniaNeural", "女", "亲和"),
+    ("en-GB", "RyanNeural", "男", "亲和"),
+    ("en-GB", "ThomasNeural", "男", "亲和"),
+    ("en-AU", "NatashaNeural", "女", "亲和"),
+    ("en-AU", "WilliamMultilingualNeural", "男", "亲和"),
+    ("en-CA", "ClaraNeural", "女", "亲和"),
+    ("en-CA", "LiamNeural", "男", "亲和"),
+    ("en-IE", "EmilyNeural", "女", "亲和"),
+    ("en-IE", "ConnorNeural", "男", "亲和"),
+    ("en-IN", "NeerjaExpressiveNeural", "女", "有表现力"),
+    ("en-IN", "NeerjaNeural", "女", "亲和"),
+    ("en-IN", "PrabhatNeural", "男", "亲和"),
+    ("en-NZ", "MollyNeural", "女", "亲和"),
+    ("en-NZ", "MitchellNeural", "男", "亲和"),
+    ("en-ZA", "LeahNeural", "女", "亲和"),
+    ("en-ZA", "LukeNeural", "男", "亲和"),
+    ("en-PH", "RosaNeural", "女", "亲和"),
+    ("en-PH", "JamesNeural", "男", "亲和"),
+    ("en-SG", "LunaNeural", "女", "亲和"),
+    ("en-SG", "WayneNeural", "男", "亲和"),
+    ("en-HK", "YanNeural", "女", "亲和"),
+    ("en-HK", "SamNeural", "男", "亲和"),
+    ("en-KE", "AsiliaNeural", "女", "亲和"),
+    ("en-KE", "ChilembaNeural", "男", "亲和"),
+    ("en-NG", "EzinneNeural", "女", "亲和"),
+    ("en-NG", "AbeoNeural", "男", "亲和"),
+    ("en-TZ", "ImaniNeural", "女", "亲和"),
+    ("en-TZ", "ElimuNeural", "男", "亲和"),
 ]
+
+VOICE_CATALOG: list[tuple[str, str]] = [
+    (
+        f"{loc}-{name}",
+        f"{name.replace('Neural', '').replace('Multilingual', '·多语')}"
+        f" | {_LOCALE_CN.get(loc, loc)} | {g} | {p}",
+    )
+    for loc, name, g, p in _VOICE_RAW
+]
+VOICE_BY_LABEL = {label: short for short, label in VOICE_CATALOG}
+LABEL_BY_VOICE = {short: label for short, label in VOICE_CATALOG}
+
+# 风格预设：(音色, pitch, rate)，None 表示不覆盖
+STYLE_PRESETS: dict[str, tuple[str, str, str] | None] = {
+    "原声（不调）": None,
+    "萝莉音": ("en-US-AnaNeural", "+35Hz", "+15%"),
+    "正太音": ("en-US-BrianNeural", "+25Hz", "+12%"),
+    "御姐音": ("en-US-AriaNeural", "-20Hz", "-5%"),
+    "大叔音": ("en-US-ChristopherNeural", "-25Hz", "-8%"),
+    "气泡音": ("en-US-ChristopherNeural", "-35Hz", "-12%"),
+    "青年音": ("en-US-BrianNeural", "+5Hz", "+8%"),
+}
 
 PREVIEW_TEXT = "Enemy one tap on A site, watch the flank."
 
@@ -158,20 +223,29 @@ class App:
                                        "audio.tts_output_device")
 
         ttk.Label(dev, text="TTS 音色：").grid(row=3, column=0, sticky="w", pady=2)
-        self.cb_voice = ttk.Combobox(dev, width=40, state="readonly",
-                                     values=VOICE_CHOICES)
+        labels = [lab for _s, lab in VOICE_CATALOG]
         cur_voice = str(self._get("tts.voice", "en-US-GuyNeural"))
-        if cur_voice not in VOICE_CHOICES:
-            VOICE_CHOICES.insert(0, cur_voice)
-            self.cb_voice["values"] = VOICE_CHOICES
-        self.cb_voice.set(cur_voice)
+        cur_label = LABEL_BY_VOICE.get(cur_voice)
+        if cur_label is None:                     # 配置文件里是别的音色
+            cur_label = f"{cur_voice}（自定义）"
+            labels = [cur_label] + labels
+            VOICE_BY_LABEL[cur_label] = cur_voice
+        self.cb_voice = ttk.Combobox(dev, width=36, state="readonly", values=labels)
+        self.cb_voice.set(cur_label)
         self.cb_voice.grid(row=3, column=1, sticky="ew", padx=8, pady=2)
         self.cb_voice.bind("<<ComboboxSelected>>", lambda _e: self._on_voice_change())
+
+        ttk.Label(dev, text="风格预设：").grid(row=4, column=0, sticky="w", pady=2)
+        self.cb_style = ttk.Combobox(dev, width=16, state="readonly",
+                                     values=list(STYLE_PRESETS.keys()))
+        self.cb_style.set("原声（不调）")
+        self.cb_style.grid(row=4, column=1, sticky="w", padx=8, pady=2)
+        self.cb_style.bind("<<ComboboxSelected>>", lambda _e: self._on_style_change())
         ttk.Button(dev, text="试听", command=self._preview_voice).grid(
-            row=3, column=2, sticky="w")
+            row=4, column=2, sticky="w")
 
         row = ttk.Frame(dev)
-        row.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+        row.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(6, 0))
         ttk.Button(row, text="刷新设备", command=self._refresh_devices).pack(side="left")
         ttk.Button(row, text="自动识别", command=self._autofill_devices).pack(side="left", padx=6)
         ttk.Button(row, text="测试 TTS→游戏", command=self._test_tts).pack(side="left", padx=6)
@@ -427,20 +501,39 @@ class App:
             self.log("已自动识别设备，可在上面手动改。")
 
     def _on_voice_change(self) -> None:
-        voice = self.cb_voice.get()
+        voice = VOICE_BY_LABEL.get(self.cb_voice.get(), "")
+        if not voice:
+            return
         self._set("tts.voice", voice)
         self.log(f"TTS 音色改为 {voice}（点「试听」听效果）")
 
+    def _on_style_change(self) -> None:
+        name = self.cb_style.get()
+        preset = STYLE_PRESETS.get(name)
+        if preset is None:
+            self._set("tts.pitch", "+0Hz")
+            self.log("风格预设：原声（音高已复位，音色保持不变）")
+            return
+        voice, pitch, rate = preset
+        self._set("tts.voice", voice)
+        self._set("tts.pitch", pitch)
+        self._set("tts.rate", rate)
+        label = LABEL_BY_VOICE.get(voice, voice)
+        self.cb_voice.set(label)
+        self.log(f"风格预设：{name} → {voice} 音高 {pitch} 语速 {rate}")
+
     def _preview_voice(self) -> None:
         """试听：播到你的耳机（不是 Cable），这样能直接听到。"""
-        voice = self.cb_voice.get()
+        voice = VOICE_BY_LABEL.get(self.cb_voice.get(), self.cb_voice.get())
         self._set("tts.voice", voice)
         out_dev = self._get("audio.game_output_device", "") or self._get(
             "audio.tts_output_device", "")
         if not out_dev:
             self.log("[试听] 没设置输出设备")
             return
-        self.log(f"[试听] {voice} → 播放到 {out_dev}")
+        pitch = self._get("tts.pitch", "+0Hz")
+        rate = self._get("tts.rate", "+10%")
+        self.log(f"[试听] {voice}  音高 {pitch}  语速 {rate}  → {out_dev}")
 
         def run():
             t0 = time.time()

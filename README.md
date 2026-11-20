@@ -257,6 +257,38 @@ Bing:  敌人一次击杀在A点，小心侧翼。（one tap=一枪头，flank=�
 
 匹配时会忽略空格和大小写，`+ 4`、`AFK` 一样能命中。带上下文的句子（比如 `+4 guys, going afk now`）仍然走机翻。
 
+### 4.7 TTS 音色（队友听到的声音）
+
+面板「音频设备」最下面一行可以选音色，旁边有「**试听**」按钮 —— 点一下直接播到你的耳机（不是 Cable），立刻能听到效果。
+
+内置 11 个常用英文音色：
+
+| 音色 | 特点 |
+|---|---|
+| **en-US-AndrewNeural** | 男声，最自然（微软标 Warm/Confident/Authentic） |
+| en-US-GuyNeural | 男声，稳重，偏播报腔（默认） |
+| en-US-AriaNeural | 女声，积极自信 |
+| en-US-JennyNeural | 女声，更亲和 |
+| en-US-AvaMultilingualNeural | 表现力最强，起伏多 |
+| en-US-AndrewMultilingualNeural | Andrew 的多语版 |
+| en-GB-RyanNeural / en-GB-SoniaNeural | 英式口音，国际服常见 |
+| en-AU-WilliamMultilingualNeural | 澳洲口音 |
+| en-CA-LiamNeural | 加拿大口音 |
+| en-IN-PrabhatNeural | 印度口音 |
+
+这些是**微软 Azure 神经网络音色**，不是老式 SAPI 那种机器人音，基础音质接近真人。但队友仍会觉得「不像真人」，原因不是音质：
+
+| 来源 | 说明 |
+|---|---|
+| 没有情绪起伏 | 念固定文本，语气平，真人喊战术会带急迫感 |
+| 语速均匀 | 每个词等长，真人会重点词加重 |
+| 游戏语音压缩 | 无畏契约用 Opus 约 24kbps，削高频，「电话里的人」感 |
+| 节奏接不上 | 你说完约 2 秒后英文才出来 |
+
+想更像真人：换 `AndrewNeural`、把 `tts.rate` 从 `+10%` 降到 `+0%`、让 LLM 把措辞翻得更口语（已支持）。
+
+`config.json` 里也可以直接改 `tts.voice`。**换音色不用清缓存** —— 缓存按「文本 + 音色 + 语速」分开存，自动重新合成。
+
 ---
 
 ## 5. 性能（本机实测，RTX 4060）

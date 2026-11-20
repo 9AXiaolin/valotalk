@@ -32,6 +32,23 @@ from .tts import TTS
 
 FONT = "Microsoft YaHei UI"
 
+# 常用英文音色（全部 47 个太多，这里挑自然度靠前的）
+VOICE_CHOICES = [
+    "en-US-AndrewNeural",
+    "en-US-GuyNeural",
+    "en-US-AriaNeural",
+    "en-US-JennyNeural",
+    "en-US-AvaMultilingualNeural",
+    "en-US-AndrewMultilingualNeural",
+    "en-GB-RyanNeural",
+    "en-GB-SoniaNeural",
+    "en-AU-WilliamMultilingualNeural",
+    "en-CA-LiamNeural",
+    "en-IN-PrabhatNeural",
+]
+
+PREVIEW_TEXT = "Enemy one tap on A site, watch the flank."
+
 
 @dataclass
 class Job:
@@ -139,8 +156,22 @@ class App:
         self.cb_mic = self._device_row(dev, 1, "我的麦克风", "audio.mic_device")
         self.cb_tts = self._device_row(dev, 2, "TTS 输出（VB-Cable Input）",
                                        "audio.tts_output_device")
+
+        ttk.Label(dev, text="TTS 音色：").grid(row=3, column=0, sticky="w", pady=2)
+        self.cb_voice = ttk.Combobox(dev, width=40, state="readonly",
+                                     values=VOICE_CHOICES)
+        cur_voice = str(self._get("tts.voice", "en-US-GuyNeural"))
+        if cur_voice not in VOICE_CHOICES:
+            VOICE_CHOICES.insert(0, cur_voice)
+            self.cb_voice["values"] = VOICE_CHOICES
+        self.cb_voice.set(cur_voice)
+        self.cb_voice.grid(row=3, column=1, sticky="ew", padx=8, pady=2)
+        self.cb_voice.bind("<<ComboboxSelected>>", lambda _e: self._on_voice_change())
+        ttk.Button(dev, text="试听", command=self._preview_voice).grid(
+            row=3, column=2, sticky="w")
+
         row = ttk.Frame(dev)
-        row.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+        row.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(6, 0))
         ttk.Button(row, text="刷新设备", command=self._refresh_devices).pack(side="left")
         ttk.Button(row, text="自动识别", command=self._autofill_devices).pack(side="left", padx=6)
         ttk.Button(row, text="测试 TTS→游戏", command=self._test_tts).pack(side="left", padx=6)
@@ -394,6 +425,35 @@ class App:
         self.cfg.save()
         if not quiet:
             self.log("已自动识别设备，可在上面手动改。")
+
+    def _on_voice_change(self) -> None:
+        voice = self.cb_voice.get()
+        self._set("tts.voice", voice)
+        self.log(f"TTS 音色改为 {voice}（点「试听」听效果）")
+
+    def _preview_voice(self) -> None:
+        """试听：播到你的耳机（不是 Cable），这样能直接听到。"""
+        voice = self.cb_voice.get()
+        self._set("tts.voice", voice)
+        out_dev = self._get("audio.game_output_device", "") or self._get(
+            "audio.tts_output_device", "")
+        if not out_dev:
+            self.log("[试听] 没设置输出设备")
+            return
+        self.log(f"[试听] {voice} → 播放到 {out_dev}")
+
+        def run():
+            t0 = time.time()
+            pcm = self.tts._via_edge(PREVIEW_TEXT)
+            if pcm is None:
+                self.log(f"[试听] 合成失败：{self.tts.last_error}")
+                return
+            sink = capture.SpeakerSink(out_dev)
+            okp = sink.play(pcm, 24000)
+            self.log(f"[试听] {'完成' if okp else '播放失败：' + sink.last_error}"
+                     f"  用时 {time.time()-t0:.1f}s")
+
+        threading.Thread(target=run, daemon=True).start()
 
     def _save_llm(self) -> None:
         self._set("translate.llm.base_url", self.e_base.get().strip())

@@ -251,6 +251,9 @@ class WhisperASR:
                     condition_on_previous_text=False,
                     without_timestamps=True,
                     temperature=0.0,
+                    # 中文容易输出繁体（掩護我），这句 prompt 把它掰回简体
+                    initial_prompt=("以下是普通话的句子，请使用简体中文。"
+                                    if language == "zh" else None),
                 )
                 text = " ".join(seg.text for seg in segments)
         except Exception as exc:

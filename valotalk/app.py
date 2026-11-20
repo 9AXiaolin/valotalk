@@ -21,6 +21,7 @@ from tkinter import ttk
 
 import numpy as np
 
+from . import __version__
 from . import capture, winapi
 from .asr import WhisperASR
 from .config import CONFIG
@@ -85,7 +86,7 @@ class App:
     # ============================================================ UI
     def _build_ui(self) -> None:
         self.root = tk.Tk()
-        self.root.title("ValoTalk · 无畏契约实时翻译")
+        self.root.title(f"ValoTalk v{__version__} · 无畏契约实时翻译")
         self.root.geometry("880x780")
         self.root.minsize(780, 640)
         self.root.configure(bg="#11151c")
@@ -114,6 +115,8 @@ class App:
         head = ttk.Frame(outer)
         head.pack(fill="x")
         ttk.Label(head, text="ValoTalk", style="Head.TLabel").pack(side="left")
+        ttk.Label(head, text=f"v{__version__}", style="Hint.TLabel").pack(
+            side="left", padx=(5, 0))
         self.state_lbl = ttk.Label(head, text="● 未启动", foreground="#f87171",
                                    font=(FONT, 11, "bold"))
         self.state_lbl.pack(side="left", padx=12)
@@ -154,9 +157,10 @@ class App:
         ttk.Checkbutton(sw, text="队友语音 → 中文字幕", variable=self.v_team,
                         command=lambda: self._set_flag("team", self.v_team.get())
                         ).grid(row=0, column=0, sticky="w", padx=(0, 18))
-        ttk.Checkbutton(sw, text="我说中文 → 英文语音（按住 F2）", variable=self.v_me,
-                        command=lambda: self._set_flag("me", self.v_me.get())
-                        ).grid(row=0, column=1, sticky="w", padx=(0, 18))
+        self.chk_me = ttk.Checkbutton(
+            sw, text=self._me_label(), variable=self.v_me,
+            command=lambda: self._set_flag("me", self.v_me.get()))
+        self.chk_me.grid(row=0, column=1, sticky="w", padx=(0, 18))
         ttk.Checkbutton(sw, text="左下角聊天翻译", variable=self.v_chat,
                         command=lambda: self._set_flag("chat", self.v_chat.get())
                         ).grid(row=0, column=2, sticky="w")
@@ -199,8 +203,11 @@ class App:
 
         ttk.Label(hk, text="MOUSE4 / MOUSE5 = 鼠标侧键（后退 / 前进）；"
                            "字母键故意不开放，防止打字时误触",
-                  style="Hint.TLabel").grid(row=1, column=0, columnspan=8,
+                  style="Hint.TLabel").grid(row=2, column=0, columnspan=8,
                                             sticky="w", pady=(6, 0))
+        ttk.Button(hk, text="检测按键（才知道键盘真正发出什么）",
+                   command=self._key_probe).grid(row=1, column=0, columnspan=3,
+                                                 sticky="w", pady=(6, 0))
 
         # ---- 聊天区域 / 翻译后端 ----
         box = ttk.LabelFrame(outer, text=" 聊天区域 & 翻译后端 ", padding=10)
@@ -276,6 +283,17 @@ class App:
             daemon=True,
         ).start()
 
+    def _me_label(self) -> str:
+        """跟着当前触发键走，改成鼠标侧键后这里也显示 MOUSE4。"""
+        key = str(self._get("hotkeys.ptt", "f2") or "f2").upper()
+        return f"我说中文 → 英文语音（按住 {key}）"
+
+    def _refresh_me_label(self) -> None:
+        try:
+            self.chk_me.configure(text=self._me_label())
+        except Exception:
+            pass
+
     def _on_cpu_toggle(self) -> None:
         """显卡紧张时完全退出 GPU：识别改走 CPU。"""
         dev = "cpu" if self.v_cpu.get() else "auto"
@@ -293,6 +311,55 @@ class App:
             self.asr.ensure_loaded(on_status=lambda s: self.log(f"[模型] {s}"))
 
         threading.Thread(target=reload, daemon=True).start()
+
+    def _key_probe(self) -> None:
+        """按住任意键，看键盘到底发出什么虚拟键码。用来确认 Fn 组合的真实行为。"""
+        top = tk.Toplevel(self.root)
+        top.title("按键检测")
+        top.geometry("420x180")
+        top.attributes("-topmost", True)
+        ttk.Label(top, text="按住你想用的那个键（含 Fn 组合），下面是实际键码",
+                  font=(FONT, 10)).pack(pady=(14, 6))
+        big = ttk.Label(top, text="等待按键…", font=(FONT, 16, "bold"),
+                        foreground="#7DD3FC")
+        big.pack(pady=6)
+        hint = ttk.Label(top, text="", style="Hint.TLabel")
+        hint.pack(pady=4)
+
+        names = {v: k.upper() for k, v in winapi.VK.items()}
+        deadline = time.time() + 20
+        last_vk = 0
+
+        def poll():
+            nonlocal last_vk
+            if not top.winfo_exists():
+                return
+            if time.time() > deadline:
+                big.configure(text="超时，已停止")
+                return
+            for vk in range(0x01, 0xFF):
+                if winapi.user32.GetAsyncKeyState(vk) & 0x8000:
+                    if vk != last_vk:
+                        last_vk = vk
+                        name = names.get(vk, "?")
+                        big.configure(text=f"VK 0x{vk:02X}   ({name})")
+                        if vk == 0x71:
+                            hint.configure(text="这就是 F2，程序能识别 ✓")
+                        elif vk == 0x32:
+                            hint.configure(text="这是数字 2 ！键盘没发出 F2 —— "
+                                                "游戏会切枪，程序也认不到")
+                        elif 0x70 <= vk <= 0x7B:
+                            hint.configure(text="F 区键，可以选")
+                        elif vk in (0x05, 0x06):
+                            hint.configure(text="鼠标侧键，推荐用在 FPS 里")
+                        else:
+                            hint.configure(text="")
+                    break
+                last_vk = 0 if last_vk == vk else last_vk
+            top.after(25, poll)
+
+        ttk.Button(top, text="关闭", command=top.destroy).pack(pady=6)
+        poll()
 
     def _set_flag(self, name: str, value: bool) -> None:
         self.flags[name] = bool(value)
@@ -378,6 +445,7 @@ class App:
             self._set("hotkeys." + k, v, save=False)
         self.cfg.save()
         self._bind_hotkeys()
+        self._refresh_me_label()
         self.log("快捷键已更新：" + "  ".join(f"{k} → {v.upper()}" for k, v in hk.items()))
         self._ui_state(self.state_lbl.cget("text"), self.state_lbl.cget("foreground"))
 
@@ -507,14 +575,11 @@ class App:
         if self._seg_me is None:
             return
         for seg in self._seg_me.feed(pcm):
-            if not (self._me_armed or self._auto_vad()) or not self.flags["me"]:
+            if not self._me_armed or not self.flags["me"]:
                 continue
             if self._muted_outgoing:
                 continue
             self._submit_asr("me", seg)
-
-    def _auto_vad(self) -> bool:
-        return bool(self._get("audio.auto_vad", False))
 
     def _submit_asr(self, kind: str, pcm: np.ndarray) -> None:
         job = Job(kind=kind, pcm=pcm)

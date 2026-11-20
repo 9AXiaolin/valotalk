@@ -34,6 +34,23 @@ VALORANT_TERMS: dict[str, str] = {
     "ns": "好枪", "nice shot": "好枪", "on me": "我这边有人",
     "behind you": "你后面", "last one": "还剩一个", "one left": "还剩一个",
     "low": "残血", "cubby": "墙角", "wide": "拉宽",
+    "+4": "在家挂机", "+1": "同意", "afk": "挂机中", "brb": "马上回来",
+}
+
+# ---------------- 英文/符号 → 中文：整句直出，绕开机翻 ----------------
+# 游戏里队友常打的缩写和黑话，机翻会原样吐回来或者译错，这里直接给答案
+_DIRECT_EN_ZH: dict[str, str] = {
+    "+4": "在家挂机",
+    "+1": "同意",
+    "afk": "挂机中",
+    "brb": "马上回来",
+    "omw": "在路上了",
+    "nt": "可惜",
+    "gj": "干得漂亮",
+    "wp": "漂亮",
+    "gg": "打得好",
+    "ez": "轻松",
+    "ns": "好枪",
 }
 
 # ---------------- 中文喊话 → 英文（整句命中直接出，绕开机翻） ----------------
@@ -87,6 +104,10 @@ VOICE_LINES: dict[str, str] = {
     "小心狙": "Watch the OP.",
     "有狙": "They have an OP.",
     "他们没枪": "They're on eco.",
+    "在家挂机": "I'm AFK at home.",
+    "我挂机": "I'm going AFK.",
+    "挂机": "AFK.",
+    "我挂一会": "AFK for a bit.",
 }
 
 _LLM_SYSTEM = (
@@ -158,6 +179,14 @@ class Translator:
         # 中文喊话直出（最快最准）
         if src == "zh" and dst.startswith("en"):
             direct = self._voice_line(text)
+            if direct:
+                self.backend_used = "script"
+                self._cache.put(key, direct)
+                return direct
+
+        # 英文缩写/符号直出：+4=在家挂机、afk=挂机中 这类机翻必错的
+        if src == "en" and dst.startswith("zh"):
+            direct = _DIRECT_EN_ZH.get(re.sub(r"\s+", "", text).lower())
             if direct:
                 self.backend_used = "script"
                 self._cache.put(key, direct)

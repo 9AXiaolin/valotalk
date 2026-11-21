@@ -40,14 +40,14 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1
 
 | 项 | 设成 |
 |---|---|
-| 语音聊天输入设备 | **麦克风 (VB-Audio Virtual Cable)** |
+| 语音聊天输入设备 | **变音麦克风 (VB-Audio Virtual Cable)** |
 | 语音聊天输出设备 | **你的耳机/扬声器**（**不要**选 Cable） |
 | 语音聊天模式 | 见下 |
 
 > ⚠️ 中文系统里 VB-Audio Cable 的两个端点名字是反的，别选错：
 >
-> - `输出 (VB-Audio Virtual Cable)` = **播放端**，ValoTalk 往这里灌英文（面板上的「TTS 输出」）
-> - `麦克风 (VB-Audio Virtual Cable)` = **录音端**，游戏从这取麦克风（游戏里的「语音输入」）
+> - `变声器输出 (VB-Audio Virtual Cable)` = **播放端**，ValoTalk 往这里灌英文（面板上的「TTS 输出」）
+> - `变音麦克风 (VB-Audio Virtual Cable)` = **录音端**，游戏从这取麦克风（游戏里的「语音输入」）
 
 **关于 Push to Talk：** 两种都行。
 

@@ -447,22 +447,27 @@ class App:
         # base_url 占一行，model / key / 保存 另起一行（右列窄，挤一行会裁掉按钮）
         llm_row = tk.Frame(b4, bg=ui.CARD)
         llm_row.pack(fill="x", pady=(8, 0))
-        tk.Label(llm_row, text="LLM", bg=ui.CARD, fg=ui.TEXT2,
+        tk.Label(llm_row, text="LLM URL", bg=ui.CARD, fg=ui.TEXT2,
                  font=(ui.FONT, ui.FS_SMALL), width=9, anchor="w").pack(side="left")
-        self.e_base = ui.RoundEntry(llm_row, width=290, height=28)
+        self.e_base = ui.RoundEntry(llm_row, width=290, height=28,
+                                    placeholder="https://api.deepseek.com/v1")
         self.e_base.set(self._get("translate.llm.base_url", ""))
         self.e_base.pack(side="left")
 
         llm_row2 = tk.Frame(b4, bg=ui.CARD)
         llm_row2.pack(fill="x", pady=(6, 0))
-        tk.Label(llm_row2, text="", bg=ui.CARD, width=9,
-                 font=(ui.FONT, ui.FS_SMALL)).pack(side="left")
-        self.e_model = ui.RoundEntry(llm_row2, width=130, height=28)
+        tk.Label(llm_row2, text="模型", bg=ui.CARD, fg=ui.TEXT2,
+                 font=(ui.FONT, ui.FS_SMALL), width=9, anchor="w").pack(side="left")
+        self.e_model = ui.RoundEntry(llm_row2, width=110, height=28,
+                                     placeholder="deepseek-chat")
         self.e_model.set(self._get("translate.llm.model", ""))
         self.e_model.pack(side="left")
-        self.e_key = ui.RoundEntry(llm_row2, width=160, height=28, show="*")
+        tk.Label(llm_row2, text="密钥", bg=ui.CARD, fg=ui.TEXT2,
+                 font=(ui.FONT, ui.FS_SMALL)).pack(side="left", padx=(6, 0))
+        self.e_key = ui.RoundEntry(llm_row2, width=128, height=28, show="*",
+                                   placeholder="sk-xxxxxx")
         self.e_key.set(self._get("translate.llm.api_key", ""))
-        self.e_key.pack(side="left", padx=(6, 0))
+        self.e_key.pack(side="left", padx=(4, 0))
         ui.RoundButton(llm_row2, "保存", command=self._save_llm,
                        width=56, height=28).pack(side="left", padx=(6, 0))
 
@@ -750,11 +755,18 @@ class App:
         threading.Thread(target=self._test_translate, daemon=True).start()
 
     def _test_translate(self) -> None:
-        self.translator._setup_proxy()
+        # 先直接测 LLM 接口（绕过缓存/直出表）
+        ok, msg = self.translator.test_llm()
+        if ok:
+            self.log(f"[LLM 自测] ✓ 连通成功: {msg}")
+        else:
+            self.log(f"[LLM 自测] ✗ 失败: {msg}")
+            self.log("   检查 base_url 是否以 /v1 结尾、model 名、api_key")
+
+        # 再跑一遍正常翻译链路，看实际用哪个通道
         try:
             out = self.translator.translate(
                 "Rush B, plant the spike behind the box.", "en", "zh-CN")
-            zh = self.translator.translate("掩护我，我要开大了", "zh", "en")
         except Exception as exc:
             self.log(f"[翻译自测] 异常: {exc}")
             return
@@ -762,11 +774,6 @@ class App:
         if out:
             self.log(f"[翻译自测] 通道={which}")
             self.log(f"   英→中: {out}")
-            self.log(f"   中→英: {zh}")
-            if which != "llm":
-                self.log("   注：没走 LLM —— 检查 base_url 是否以 /v1 结尾、model 名、api_key")
-        else:
-            self.log(f"[翻译自测] 全部失败: {self.translator.last_error}")
 
     def _on_through_toggle(self) -> None:
         self.overlay.set_click_through(self.v_through.get())

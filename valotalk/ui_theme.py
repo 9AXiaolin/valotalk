@@ -171,12 +171,19 @@ class RoundButton(tk.Canvas):
 
 
 class RoundEntry(tk.Frame):
-    """圆角输入框：圆角背景 + 无边框 Entry。"""
+    """圆角输入框：圆角背景 + 无边框 Entry。
+
+    placeholder：水印提示，聚焦时消失、失焦且空时复原。
+    """
 
     def __init__(self, master, width: int = 200, height: int = 30,
                  radius: int = BTN_RADIUS, fill: str = CARD2,
-                 show: str = "", bg: str = CARD, **kw):
+                 show: str = "", bg: str = CARD,
+                 placeholder: str = "", **kw):
         super().__init__(master, bg=bg, **kw)
+        self._ph = placeholder
+        self._show = show
+        self._showing_ph = False
         self.canvas = tk.Canvas(self, width=width, height=height,
                                 highlightthickness=0, bd=0, bg=bg)
         self.canvas.pack()
@@ -188,13 +195,42 @@ class RoundEntry(tk.Frame):
                               font=(FONT, FS), show=show)
         self.canvas.create_window(10, height // 2, anchor="w", window=self.entry,
                                   width=max(20, width - 20), height=height - 8)
+        if self._ph:
+            self.entry.bind("<FocusIn>", self._on_focus_in)
+            self.entry.bind("<FocusOut>", self._on_focus_out)
+            self._apply_ph()
 
+    # -------- 水印 --------
+    def _apply_ph(self) -> None:
+        self.entry.configure(fg=TEXT3, show="")            # 水印时不能遮码
+        self.entry.delete(0, "end")
+        self.entry.insert(0, self._ph)
+        self._showing_ph = True
+
+    def _clear_ph(self) -> None:
+        self.entry.delete(0, "end")
+        self.entry.configure(fg=TEXT, show=self._show)
+        self._showing_ph = False
+
+    def _on_focus_in(self, _event=None) -> None:
+        if self._showing_ph:
+            self._clear_ph()
+
+    def _on_focus_out(self, _event=None) -> None:
+        if not self._showing_ph and not self.entry.get().strip():
+            self._apply_ph()
+
+    # -------- 对外 API（保持与旧版一致）--------
     def get(self) -> str:
-        return self.entry.get()
+        return "" if self._showing_ph else self.entry.get()
 
     def set(self, text: str) -> None:
+        if self._showing_ph:
+            self._clear_ph()
         self.entry.delete(0, "end")
         self.entry.insert(0, text)
+        if not text and self._ph:
+            self._apply_ph()
 
 
 class RoundCombo(tk.Frame):

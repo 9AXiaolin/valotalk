@@ -507,18 +507,23 @@ def sd_pick_output(name: str) -> tuple[int, int] | None:
 
 
 class SpeakerSink:
-    """把 PCM 播放到指定输出设备（TTS 送进游戏靠这个）。"""
+    """把 PCM 播放到指定输出设备（TTS 送进游戏靠这个）。
+
+    注意：用**类级锁**而非实例锁 —— 每次播放都 new 一个 SpeakerSink，
+    实例锁挡不住并发。两个流同时开在同一设备上就是"鬼畜音"的来源。
+    """
+
+    _play_lock = threading.Lock()          # 类级：同一时间只允许一个播放
 
     def __init__(self, device_name: str):
         self.device_name = device_name
         self.last_error = ""
-        self._lock = threading.Lock()
 
     def play(self, pcm: np.ndarray, samplerate: int) -> bool:
         pcm = np.asarray(pcm, dtype=np.float32).reshape(-1)
         if pcm.size == 0:
             return False
-        with self._lock:
+        with SpeakerSink._play_lock:
             if self._play_sounddevice(pcm, samplerate):
                 return True
             return self._play_soundcard(pcm, samplerate)
@@ -533,9 +538,11 @@ class SpeakerSink:
             pcm = resample(pcm, sr, native)
         try:
             import sounddevice as sd
-            with sd.OutputStream(device=idx, samplerate=native, channels=1,
-                                 dtype="float32") as stream:
-                stream.write(pcm.reshape(-1, 1))
+            # sd.play() 是一次性播放 API：内部管理流的开/关，
+            # sd.wait() 等播完才返回 —— 不像 OutputStream.write()
+            # 那样写完缓冲就退出导致掐断
+            sd.play(pcm.reshape(-1, 1), samplerate=native, device=idx)
+            sd.wait()
             return True
         except Exception as exc:
             self.last_error = f"sounddevice: {exc}"

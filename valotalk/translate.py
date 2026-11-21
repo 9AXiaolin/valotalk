@@ -237,6 +237,29 @@ class Translator:
     def last_error(self) -> str:
         return self._last_error
 
+    def test_llm(self) -> tuple[bool, str]:
+        """直接打 LLM 接口测连通性，绕过缓存和直出表。
+
+        返回 (成功?, 结果文本)。这是「保存配置」后唯一正确的自测方式 ——
+        走 translate() 会命中缓存/喊话表，根本测不到 LLM。
+        """
+        base = (self._get("translate.llm.base_url", "") or "").strip()
+        model = (self._get("translate.llm.model", "") or "").strip()
+        key = (self._get("translate.llm.api_key", "") or "").strip()
+        if not base or not model or not key:
+            return False, "base_url / model / api_key 未填全"
+        self._setup_proxy()
+        # 用一句肯定不在缓存/直出表里的句子
+        probe = "The coordinates are forty-two degrees north."
+        try:
+            out = self._via_llm(probe, "en", "zh-CN")
+        except Exception as exc:
+            return False, f"LLM 调用异常: {exc}"
+        if out:
+            self.backend_used = "llm"
+            return True, out
+        return False, self._last_error or "LLM 返回空"
+
     # ---------------- 内部 ----------------
     def _call(self, backend: str, text: str, src: str, dst: str) -> str:
         if backend == "llm":
